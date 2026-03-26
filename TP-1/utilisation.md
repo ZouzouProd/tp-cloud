@@ -1,59 +1,71 @@
 # Guide d'utilisation - TP Docker & Compose
 
-## Démarrage du projet
+## Demarrage du projet
 
 ### 1. Lancer tous les services
 ```bash
 docker compose up -d
 ```
 
-### 2. Vérifier que tout fonctionne
+### 2. Verifier que tout fonctionne
 ```bash
-# Vérifier l'état des conteneurs
+# Verifier l'etat des conteneurs
 docker compose ps
 
-# Vérifier les logs
+# Verifier les logs
 docker compose logs api
 docker compose logs db
 ```
 
-## Manipulations à effectuer
+## Tester les routes de l'API
 
-### Étape 1 : Vérifier que l'API fonctionne
+Les routes de l'API sont utilisables des que le projet est lance. Il est possible de les tester avec `curl`, mais il est conseille d'utiliser Bruno car c'est plus pratique pour envoyer des requetes HTTP, modifier le body JSON, relancer plusieurs tests rapidement et conserver une collection propre pour le rendu.
 
-#### Test de santé de l'API
+### Ouvrir la collection Bruno
+
+1. Installer puis ouvrir Bruno : https://www.usebruno.com/downloads
+2. Cliquer sur `Open Collection`.
+3. Selectionner le dossier `TP-1/bruno`.
+4. Choisir l'environnement `local`.
+5. Lancer les requetes `Get Health`, `Create Note` et `List Notes`.
+
+## Manipulations a effectuer
+
+### Etape 1 : Verifier que l'API fonctionne
+
+#### Test de sante de l'API
 ```bash
 curl http://localhost:3000/health
 ```
-**Résultat attendu :**
+**Resultat attendu :**
 ```json
 {"status":"ok","database":"up"}
 ```
 
-#### Accès à l'API
+#### Acces a l'API
 ```bash
 curl http://localhost:3000/notes
 ```
-**Résultat attendu :**
+**Resultat attendu :**
 ```json
 []
 ```
 
-### Étape 2 : Créer et manipuler des données
+### Etape 2 : Creer et manipuler des donnees
 
-#### Créer une note
+#### Creer une note
 ```bash
 curl -X POST http://localhost:3000/notes \
   -H "Content-Type: application/json" \
-  -d '{"title": "Première note", "content": "Contenu de ma première note"}'
+  -d '{"title": "Premiere note", "content": "Contenu de ma premiere note"}'
 ```
 
-**Résultat attendu :**
+**Resultat attendu :**
 ```json
 {
   "id": 1,
-  "title": "Première note",
-  "content": "Contenu de ma première note",
+  "title": "Premiere note",
+  "content": "Contenu de ma premiere note",
   "created_at": "2024-03-26T12:00:00.000Z"
 }
 ```
@@ -63,7 +75,7 @@ curl -X POST http://localhost:3000/notes \
 curl http://localhost:3000/notes
 ```
 
-#### Créer plusieurs notes pour les tests
+#### Creer plusieurs notes pour les tests
 ```bash
 # Note 2
 curl -X POST http://localhost:3000/notes \
@@ -76,34 +88,34 @@ curl -X POST http://localhost:3000/notes \
   -d '{"title": "Question", "content": "Pourquoi les volumes sont-ils importants ?"}'
 ```
 
-### Étape 3 : Tester la persistance des données
+### Etape 3 : Tester la persistance des donnees
 
-#### 3.1 Arrêter uniquement l'API
+#### 3.1 Arreter uniquement l'API
 ```bash
 docker compose stop api
 docker compose rm api
 ```
 
-#### 3.2 Vérifier que la base de données tourne toujours
+#### 3.2 Verifier que la base de donnees tourne toujours
 ```bash
 docker compose ps
 ```
-**Observation attendue :** Seul le service `db` doit être actif.
+**Observation attendue :** Seul le service `db` doit etre actif.
 
 #### 3.3 Relancer l'API
 ```bash
 docker compose up -d api
 ```
 
-#### 3.4 Vérifier que les données sont toujours là
+#### 3.4 Verifier que les donnees sont toujours la
 ```bash
 curl http://localhost:3000/notes
 ```
-**Observation attendue :** Toutes les notes créées précédemment doivent être présentes.
+**Observation attendue :** Toutes les notes creees precedemment doivent etre presentes.
 
-### Étape 4 : Tester la persistance complète
+### Etape 4 : Tester la persistance complete
 
-#### 4.1 Arrêter tous les services
+#### 4.1 Arreter tous les services
 ```bash
 docker compose down
 ```
@@ -113,36 +125,36 @@ docker compose down
 docker compose up -d
 ```
 
-#### 4.3 Vérifier que les données survivent
+#### 4.3 Verifier que les donnees survivent
 ```bash
 curl http://localhost:3000/notes
 ```
-**Observation attendue :** Les données doivent être intactes car le volume `postgres_data` persiste.
+**Observation attendue :** Les donnees doivent etre intactes car le volume `postgres_data` persiste.
 
 #### 4.4 Test avec suppression des volumes (pour comparaison)
 ```bash
-# ⚠️ CELA SUPPRIMERA TOUTES LES DONNÉES
+# Cela supprimera toutes les donnees
 docker compose down -v
 docker compose up -d
 curl http://localhost:3000/notes
 ```
-**Observation attendue :** La liste est vide, mais la table existe (grâce à init.sql).
+**Observation attendue :** La liste est vide, mais la table existe grace a `init.sql`.
 
-### Étape 5 : Observer les logs et comportements
+### Etape 5 : Observer les logs et comportements
 
-#### Logs de l'API au démarrage
+#### Logs de l'API au demarrage
 ```bash
 docker compose logs api
 ```
-**À observer :**
-- Message de connexion à la base de données
-- Message "Server listening on http://localhost:3000"
+**A observer :**
+- Message de connexion a la base de donnees
+- Message `Server listening on http://localhost:3000`
 
-#### Logs de la base de données
+#### Logs de la base de donnees
 ```bash
 docker compose logs db
 ```
-**À observer :**
+**A observer :**
 - Messages d'initialisation de PostgreSQL
 - Logs des connexions depuis l'API
 
