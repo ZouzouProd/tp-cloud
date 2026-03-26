@@ -1,12 +1,15 @@
 {
   "name": "api",
   "version": "1.0.0",
-  "description": "API HTTP minimale avec route /health",
+  "description": "API HTTP minimale avec PostgreSQL",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
     "test": "echo \"No tests configured\""
   },
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "pg": "^8.20.0"
+  }
 }
