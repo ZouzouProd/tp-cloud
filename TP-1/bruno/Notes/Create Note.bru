@@ -1,0 +1,23 @@
+meta {
+  name: Create Note
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{baseUrl}}/notes
+  body: json
+  auth: none
+}
+
+headers {
+  Content-Type: application/json
+  Accept: application/json
+}
+
+body:json {
+  {
+    "title": "Note Bruno",
+    "content": "test"
+  }
+}
