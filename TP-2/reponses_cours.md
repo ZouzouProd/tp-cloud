@@ -2,7 +2,14 @@
 
 ## Question 1 : Pourquoi une image locale ne suffit pas ?
 
-Une image locale ne suffit pas car elle ne contient pas les dépendances externes dont l'application a besoin pour fonctionner. Par exemple, une application Node.js a besoin de PostgreSQL pour stocker ses données. Si on lance uniquement l'image de l'application, elle ne pourra pas se connecter à la base de données car PostgreSQL n'est pas installé dans l'image.
+Une image locale ne suffit pas parce qu'elle est uniquement disponible sur ta machine.
+
+### Limites d'une image locale :
+
+- Impossible de l'utiliser sur un autre ordinateur
+- Pas accessible par un serveur de production
+- Pas simple a partager avec une equipe
+- Perdue si tu changes de machine ou d'environnement
 
 ## Question 2 : Pourquoi faire la commande docker login ?
 
@@ -16,6 +23,10 @@ La commande `docker login` est nécessaire pour authentifier l'utilisateur aupr�
 
 Lorsqu'on exécute `docker push`, l'image est envoyée vers le registre Docker (Docker Hub). Cela permet de partager l'image avec d'autres personnes ou de la déployer sur un serveur. L'image est stockée dans le registre et peut être téléchargée (pull) par d'autres utilisateurs.
 
-## Question 5 : Pourquoi la solution suivante n'est-elle pas valable dans le Cloud ?
+## Question 5 : Peut-on modifier directement l’image v1 déjà déployée ?
+
+Non, on ne peut pas modifier directement l'image v1 déjà déployée car les images Docker doivent être immuables. Une fois déployée, une image ne peut pas être modifiée directement car cela briserait les principes de traçabilité, de reproductibilité et de sécurité.
+
+## Question 6 : Pourquoi la solution suivante n'est-elle pas valable dans le Cloud ?
 
 La solution de modifier directement l'image v1 n'est pas valable dans le Cloud car les images Docker doivent être immuables. Une fois déployée, une image ne peut pas être modifiée directement car cela briserait les principes de traçabilité, de reproductibilité et de sécurité. Les plateformes Cloud s'attendent à ce que les images soient des artefacts statiques avec un versionnement clair (v1, v2, etc.) pour permettre les rollback et l'audit des déploiements.
