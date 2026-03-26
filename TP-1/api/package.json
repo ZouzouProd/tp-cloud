@@ -1,11 +1,12 @@
 {
   "name": "api",
   "version": "1.0.0",
+  "description": "API HTTP minimale avec route /health",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "test": "echo \"No tests configured\""
   },
   "author": "",
-  "license": "ISC",
-  "description": ""
+  "license": "ISC"
 }
