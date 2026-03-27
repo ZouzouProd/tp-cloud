@@ -22,4 +22,4 @@ describe("API", () => {
     expect(res.body).toEqual({ error: "title is required" });
     expect(pool.query).not.toHaveBeenCalled();
   });
-}); 
+});
