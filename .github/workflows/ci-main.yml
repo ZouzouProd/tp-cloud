@@ -24,14 +24,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: api/package-lock.json
+          cache-dependency-path: TP-3/api/package-lock.json
 
       - name: Install dependencies
-        working-directory: ./api
+        working-directory: ./TP-3/api
         run: npm ci
 
       - name: Run tests
-        working-directory: ./api
+        working-directory: ./TP-3/api
         run: npm test
 
       - name: Login to Docker Hub
@@ -43,7 +43,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
-          context: ./api
+          context: ./TP-3/api
           push: true
           tags: |
             ${{ env.DOCKER_IMAGE }}:latest
