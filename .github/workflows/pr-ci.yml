@@ -1,0 +1,36 @@
+name: PR - CI (tests)
+
+on:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'TP-3/api/**'
+      - '.github/workflows/pr-ci.yml'
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 18
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: TP-3/api/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./TP-3/api
+        run: npm ci
+
+      - name: Run tests
+        working-directory: ./TP-3/api
+        run: npm run test:run
