@@ -1,6 +1,6 @@
 import request from "supertest";
 import { describe, it, expect, vi } from "vitest";
-import { createApp } from "../src/app.js";
+import { createApp } from "../app.js";
 
 describe("API", () => {
   it("GET /health -> 200 ok when DB answers", async () => {
