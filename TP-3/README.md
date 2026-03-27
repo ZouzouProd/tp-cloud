@@ -26,6 +26,14 @@ npm install
 
 Le projet utilise un fichier `.env` à la racine de `TP-3` pour les variables de connexion à la base de données et la configuration de l'API.
 
+Créer ce fichier à partir de l'exemple fourni :
+
+```bash
+cp .env.example .env
+```
+
+Puis adapter les valeurs si nécessaire.
+
 ### Lancement avec Docker Compose
 
 Depuis le dossier `TP-3`, lancer les services :
