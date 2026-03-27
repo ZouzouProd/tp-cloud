@@ -2,7 +2,7 @@ name: Main - CI (test, build & push)
 
 on:
   push:
-    branches: [ main, dev ]
+    branches: [ main ]
 
 permissions:
   contents: read
