@@ -1,4 +1,5 @@
 import express from "express";
+import pinoHttp from "pino-http";
 import { logger } from "./logger.js";
 import { createMetrics } from "./metrics.js";
 
@@ -14,6 +15,7 @@ function parseId(req, res) {
   const id = Number(req.params.id);
 
   if (!Number.isInteger(id) || id <= 0) {
+    res.locals.logMessage = "Invalid id. Expected a positive integer.";
     logger.warn({ id: req.params.id }, "invalid note id");
     res.status(400).json({ error: "Invalid id. Expected a positive integer." });
     return null;
@@ -30,6 +32,30 @@ function asyncHandler(handler) {
 
 export function createApp({ pool, metrics = createMetrics() }) {
   const app = express();
+
+  app.use(
+    pinoHttp({
+      logger,
+      customLogLevel: (_req, res, err) => {
+        if (err || res.statusCode >= 500) return "error";
+        if (res.statusCode >= 400) return "warn";
+        return "info";
+      },
+      customSuccessMessage: (_req, res) => {
+        if (res.statusCode >= 400) {
+          return (
+            res.locals?.logMessage ??
+            `request failed with status ${res.statusCode}`
+          );
+        }
+
+        return "request completed";
+      },
+      customErrorMessage: (_req, res, err) => {
+        return res.locals?.logMessage ?? err?.message ?? "request error";
+      },
+    }),
+  );
 
   app.use(express.json());
   app.use(metrics.middleware);
@@ -61,6 +87,7 @@ export function createApp({ pool, metrics = createMetrics() }) {
     logger.info({ title }, "creating note");
 
     if (!isNonEmptyString(title)) {
+      res.locals.logMessage = "title is required";
       logger.warn({ body: req.body }, "missing or invalid title");
       return res.status(400).json({
         error: "title is required",
@@ -85,6 +112,7 @@ export function createApp({ pool, metrics = createMetrics() }) {
     logger.info({ id }, "updating note");
 
     if (!isNonEmptyString(title)) {
+      res.locals.logMessage = "title is required and must be a non-empty string";
       logger.warn({ id, body: req.body }, "missing or invalid title");
       return res.status(400).json({
         error: "title is required and must be a non-empty string",
@@ -92,6 +120,7 @@ export function createApp({ pool, metrics = createMetrics() }) {
     }
 
     if (!isStringOrUndefined(content)) {
+      res.locals.logMessage = "content must be a string if provided";
       logger.warn({ id, body: req.body }, "invalid content type");
       return res.status(400).json({
         error: "content must be a string if provided",
@@ -110,6 +139,7 @@ export function createApp({ pool, metrics = createMetrics() }) {
     );
 
     if (result.rows.length === 0) {
+      res.locals.logMessage = "note not found";
       logger.warn({ id }, "note not found for update");
       return res.status(404).json({ error: "note not found" });
     }
@@ -127,6 +157,7 @@ export function createApp({ pool, metrics = createMetrics() }) {
     const result = await pool.query("SELECT * FROM notes WHERE id = $1", [id]);
 
     if (result.rows.length === 0) {
+      res.locals.logMessage = "note not found";
       logger.warn({ id }, "note not found");
       return res.status(404).json({ error: "note not found" });
     }
@@ -146,6 +177,7 @@ export function createApp({ pool, metrics = createMetrics() }) {
     );
 
     if (result.rows.length === 0) {
+      res.locals.logMessage = "note not found";
       logger.warn({ id }, "note not found for deletion");
       return res.status(404).json({ error: "note not found" });
     }
@@ -155,17 +187,20 @@ export function createApp({ pool, metrics = createMetrics() }) {
   }));
 
   app.use((req, res) => {
+    res.locals.logMessage = "Endpoint not found";
     logger.warn({ method: req.method, path: req.path }, "endpoint not found");
     res.status(404).json({ error: "Endpoint not found" });
   });
 
   app.use((err, req, res, _next) => {
+    res.locals.logMessage = err?.message ?? "Internal server error";
     logger.error(
       { err: err.message, method: req.method, path: req.path },
       "unhandled request error",
     );
 
     if (req.path === "/health/db") {
+      res.locals.logMessage = "Database down";
       return res.status(503).json({ status: "error", database: "down" });
     }
 
