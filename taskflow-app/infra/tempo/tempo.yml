@@ -1,12 +1,19 @@
 server:
-  # ...
+  # API HTTP interrogée par Grafana (et endpoints Tempo)
+  http_listen_port: 3200
 
 distributor:
   receivers:
-    # ...
+    otlp:
+      protocols:
+        # Communication Collector -> Tempo via gRPC (plus performant qu'HTTP)
+        grpc:
+          endpoint: 0.0.0.0:4317
           
 storage:
   trace:
-    # ...
+    backend: local
+    local:
+      path: /tmp/tempo/traces
     wal:
-      # ...
+      path: /tmp/tempo/wal
