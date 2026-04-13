@@ -1,5 +1,5 @@
 require("./tracing");
-const { register } = require("./metrics");
+const { register, metricsMiddleware } = require("./metrics");
 const express = require("express");
 const pino = require("pino");
 const pinoHttp = require("pino-http");
@@ -25,6 +25,7 @@ app.use(
     customErrorMessage: (req, res, err) => `request failed : ${err.message}`,
   }),
 );
+app.use(metricsMiddleware);
 
 app.get("/health", (req, res) =>
   res.json({ status: "ok", service: "task-service" }),

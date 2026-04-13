@@ -2,7 +2,10 @@ server:
   http_listen_port: 9080
 
 clients:
-  - url: [...]
+  - url: http://loki:3100/loki/api/v1/push
+
+positions:
+  filename: /tmp/positions.yaml
 
 scrape_configs:
   - job_name: containers
@@ -11,15 +14,34 @@ scrape_configs:
         refresh_interval: 5s
     relabel_configs:
       - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
         target_label: container
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: job
       - source_labels: [__meta_docker_container_log_stream]
         target_label: stream
+      - source_labels: [__meta_docker_container_label_com_docker_compose_service]
+        target_label: service
+      - source_labels: [__meta_docker_container_label_com_docker_compose_project]
+        target_label: compose_project
+      - source_labels: [__meta_docker_container_id]
+        target_label: __path__
+        replacement: /var/lib/docker/containers/$1/*-json.log
     pipeline_stages:
+      - docker: {}
       - json:
           expressions:
-            level: [...]
-            msg: [...]
+            level: level
+            msg: msg
+            statusCode: statusCode
+            traceId: trace_id
       - template:
-          # ...
+          source: level
+          template: '{{ if eq .Value "30" }}info{{ else if eq .Value "40" }}warn{{ else if eq .Value "50" }}error{{ else }}{{ .Value }}{{ end }}'
       - labels:
           level:
+          service:
+      - structured_metadata:
+          statusCode:
+          traceId:
