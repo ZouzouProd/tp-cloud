@@ -70,7 +70,17 @@ Exposées sur `GET /metrics` (format Prometheus).
 
 Endpoint `GET /health` (statut HTTP cohérent avec l’état du service et ses dépendances).
 
+## Fichiers principaux
+
+- **Application principale** : `api/src/app.js`
+- **Serveur** : `api/src/server.js`
+- **Base de données** : `api/src/db.js`
+- **Logger** : `api/src/logger.js`
+- **Métriques** : `api/src/metrics.js`
+- **Configuration Docker** : `docker-compose.yml`
+- **Tests** : `api/test/`
+
 ## Documentation (cours + évaluation)
 
 - **Réponses (cours)** : `TP-4/reponses_cours.md`
-- **Grille d’évaluation – TP Observabilité (Logs + Metrics + Health)** : `TP-4/reponses_cours.md#grille-dévaluation--tp-observabilité-logs--metrics--health`
+- **Preuves de l'observabilité** : `TP-4/preuves/endpoint-metrics.png` (capture d'écran de l'endpoint /metrics) et `TP-4/preuves/npm-test.png` (capture d'écran de la commande npm test)
