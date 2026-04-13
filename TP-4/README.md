@@ -29,6 +29,15 @@ Variables utiles :
 - `API_PORT` pour le port de l'API
 - `LOG_LEVEL` pour le niveau de logs (`info`, `warn`, `error`)
 
+## URL de l’application
+
+L’API est disponible sur :
+- `http://localhost:${API_PORT}`
+
+Endpoints utiles :
+- `GET http://localhost:${API_PORT}/health`
+- `GET http://localhost:${API_PORT}/metrics`
+
 ## Lancement
 
 Depuis le dossier `TP-4` :
