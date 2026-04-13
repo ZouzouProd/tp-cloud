@@ -1,27 +1,63 @@
 const client = require("prom-client");
 
-const register = new client.Registry()
-client.collectDefaultMetrics({ register })
+const register = new client.Registry();
+client.collectDefaultMetrics({ register });
 
 const httpRequestsTotal = new client.Counter({
-  name: 'http_requests_total',
-  help: 'Total HTTP requests',
-  labelNames: ['method', 'route', 'status']
-})
+  name: "http_requests_total",
+  help: "Total HTTP requests",
+  labelNames: ["method", "route", "status"],
+});
 
 const httpRequestDurationMs = new client.Histogram({
-  name: 'http_request_duration_ms',
-  help: 'HTTP request duration in ms',
-  labelNames: ['method', 'route', 'status'],
-  buckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2000]
-})
+  name: "http_request_duration_ms",
+  help: "HTTP request duration in ms",
+  labelNames: ["method", "route", "status"],
+  buckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2000],
+});
 
-// Register metrics
-register.registerMetric(httpRequestsTotal)
-register.registerMetric(httpRequestDurationMs)
+const userRegistrationsTotal = new client.Counter({
+  name: "user_registrations_total",
+  help: "Total user registrations",
+});
+
+const userLoginAttemptsTotal = new client.Counter({
+  name: "user_login_attempts_total",
+  help: "Total user login attempts",
+  labelNames: ["success"],
+});
+
+register.registerMetric(httpRequestsTotal);
+register.registerMetric(httpRequestDurationMs);
+register.registerMetric(userRegistrationsTotal);
+register.registerMetric(userLoginAttemptsTotal);
+
+function getRouteLabel(req) {
+  return req.route?.path ? `${req.baseUrl || ""}${req.route.path}` : req.baseUrl || req.path;
+}
+
+function metricsMiddleware(req, res, next) {
+  const startedAt = Date.now();
+
+  res.on("finish", () => {
+    const labels = {
+      method: req.method,
+      route: getRouteLabel(req),
+      status: String(res.statusCode),
+    };
+
+    httpRequestsTotal.inc(labels);
+    httpRequestDurationMs.observe(labels, Date.now() - startedAt);
+  });
+
+  next();
+}
 
 module.exports = {
   register,
+  metricsMiddleware,
   httpRequestsTotal,
-  httpRequestDurationMs
-}
+  httpRequestDurationMs,
+  userRegistrationsTotal,
+  userLoginAttemptsTotal,
+};

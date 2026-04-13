@@ -1,4 +1,6 @@
--- TaskFlow - Initialisation de la base de données
+-- TaskFlow - Initialisation de la base de donnees
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -31,7 +33,6 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
--- Données de test
 INSERT INTO users (email, password_hash, name) VALUES
   ('alice@taskflow.dev', '$2b$10$rQZ4J3YKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'Alice Martin'),
   ('bob@taskflow.dev', '$2b$10$rQZ4J3YKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx', 'Bob Dupont')

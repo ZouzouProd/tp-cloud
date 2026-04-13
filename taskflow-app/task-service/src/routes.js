@@ -1,8 +1,15 @@
 const express = require("express");
+const { trace } = require("@opentelemetry/api");
 const db = require("./db");
 const { publish } = require("./publisher");
+const {
+  tasksCreatedTotal,
+  tasksStatusChangesTotal,
+  refreshTasksGauge,
+} = require("./metrics");
 
 const router = express.Router();
+const tracer = trace.getTracer("task-service");
 
 // GET /tasks
 router.get("/", async (req, res) => {
@@ -30,6 +37,7 @@ router.get("/", async (req, res) => {
     const result = await db.query(query, params);
     res.json(result.rows);
   } catch (err) {
+    req.log.error({ err }, "failed to list tasks");
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -44,6 +52,7 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ error: "Task not found" });
     res.json(result.rows[0]);
   } catch (err) {
+    req.log.error({ err }, "failed to fetch task");
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -52,7 +61,10 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   const { title, description, priority, assignee_id, due_date, created_by } =
     req.body;
-  if (!title) return res.status(400).json({ error: "title is required" });
+  if (!title) {
+    req.log.warn({ body: req.body }, "title is required");
+    return res.status(400).json({ error: "title is required" });
+  }
   try {
     const result = await db.query(
       `INSERT INTO tasks (title, description, priority, assignee_id, due_date, created_by)
@@ -67,15 +79,24 @@ router.post("/", async (req, res) => {
       ],
     );
     const task = result.rows[0];
+    tasksCreatedTotal.inc({ priority: task.priority });
 
-    await publish("task.created", {
-      taskId: task.id,
-      title: task.title,
-      assigneeId: task.assignee_id,
-    });
+    const span = tracer.startSpan("publish.task.created");
+    try {
+      await publish("task.created", {
+        taskId: task.id,
+        title: task.title,
+        assigneeId: task.assignee_id,
+      });
+    } finally {
+      span.end();
+    }
+
+    await refreshTasksGauge(db);
 
     res.status(201).json(task);
   } catch (err) {
+    req.log.error({ err }, "failed to create task");
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -114,16 +135,29 @@ router.patch("/:id", async (req, res) => {
     const task = result.rows[0];
 
     if (status && status !== current.rows[0].status) {
-      await publish("task.status_changed", {
-        taskId: task.id,
-        oldStatus: current.rows[0].status,
-        newStatus: status,
-        assigneeId: task.assignee_id,
+      tasksStatusChangesTotal.inc({
+        from_status: current.rows[0].status,
+        to_status: status,
       });
+
+      const span = tracer.startSpan("publish.task.status_changed");
+      try {
+        await publish("task.status_changed", {
+          taskId: task.id,
+          oldStatus: current.rows[0].status,
+          newStatus: status,
+          assigneeId: task.assignee_id,
+        });
+      } finally {
+        span.end();
+      }
     }
+
+    await refreshTasksGauge(db);
 
     res.json(task);
   } catch (err) {
+    req.log.error({ err }, "failed to update task");
     res.status(500).json({ error: "Internal server error" });
   }
 });
@@ -137,8 +171,10 @@ router.delete("/:id", async (req, res) => {
     );
     if (!result.rows[0])
       return res.status(404).json({ error: "Task not found" });
+    await refreshTasksGauge(db);
     res.status(204).send();
   } catch (err) {
+    req.log.error({ err }, "failed to delete task");
     res.status(500).json({ error: "Internal server error" });
   }
 });
