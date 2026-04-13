@@ -7,7 +7,9 @@ const logger = pino({ level: process.env.LOG_LEVEL || 'info' });
 const notifications = [];
 
 async function startSubscriber() {
-  const subscriber = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+  const subscriber = createClient({
+    url: process.env.REDIS_URL || 'redis://redis:6379',
+  });
   subscriber.on('error', (err) => logger.error({ err }, 'Redis subscriber error'));
 
   await subscriber.connect();
