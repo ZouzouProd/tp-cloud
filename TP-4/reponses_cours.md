@@ -4,8 +4,17 @@
 
 ### Question 1 : Montrez les logs produit par logger, à quoi ressemble-t-il ?
 
-```
-logger.info({ id: result.rows[0].id }, "Note created");
+Exemple de log **structuré JSON** produit par Pino :
+
+```json
+{
+  "level": 30,
+  "time": 1713020000000,
+  "pid": 12345,
+  "hostname": "api",
+  "id": 42,
+  "msg": "Note created"
+}
 ```
 
 ### Question 2 : En quoi ce format diffère-t-il d'un console.log classique ?
@@ -27,7 +36,9 @@ Les fichiers sur le cloud sont volatiles et ne peuvent pas être stockés de man
 
 ### Question 5 : Y a-t-il une information, dans les logs fournis par pino, que l'on pourrait utiliser pour corréler nos logs comme le ferait OTel ?
 
-Oui, pino inclut un champ `pid` (process ID) et `hostname` qui peuvent être utilisés pour corréler les logs. De plus, chaque log contient un timestamp qui permet de les ordonner temporellement.
+Oui : côté HTTP, on peut s’appuyer sur un **identifiant de requête** (souvent `req.id` via `pino-http`) pour **regrouper tous les logs liés à une même requête**.
+
+Pour une corrélation “comme OTel” (multi-services), il faut surtout un **trace id** propagé (par ex. `traceId` / `trace_id` issu d’un header `traceparent` ou `x-request-id`) et l’inclure dans chaque log : ce n’est pas fourni “magiquement” par Pino, c’est à l’application/middlewares de l’ajouter.
 
 ## Partie 2
 
@@ -51,15 +62,14 @@ Oui, pino inclut un champ `pid` (process ID) et `hostname` qui peuvent être uti
 }
 ```
 
-Les champs qui apparaissent sont : `level`, `time`, `pid`, `hostname`, et `req` avec `id`, `method`, `url`, `headers`.
+Les champs qui apparaissent typiquement sont : `level`, `time`, `pid`, `hostname`, et un objet `req` (ex: `id`, `method`, `url`, `headers`). Selon la version/configuration, on voit aussi souvent `res.statusCode` et `responseTime` (log de fin de requête).
 
 ### Question 2 : Quelles informations manquent pour diagnostiquer une requête en erreur ?
 
-Il manque :
-- Le statut HTTP de la réponse
-- Le temps de réponse
-- Un message indiquant si la requête a réussi ou échoué
-- La raison de l'échec (erreur métier, ressource non trouvée, etc.)
+Même si `pino-http` fournit déjà souvent `statusCode` et `responseTime`, il manque généralement ce qui fait vraiment gagner du temps en debug :
+- La **raison explicite** côté application (ex: règle métier “title required”, validation, etc.)
+- Un **niveau de log adapté** à l’issue (info/ warn/ error) pour filtrer/alerter proprement
+- Éventuellement des **champs de corrélation** (`req.id`, `traceId`) pour relier les logs d’une même requête
 
 ### Question 3 : Montrer les logs obtenus lors d'un appel échoué à cause d'une règle métier, qu'est-ce qui a changé ?
 
