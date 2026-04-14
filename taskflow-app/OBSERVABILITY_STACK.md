@@ -151,20 +151,6 @@ flowchart TB
 2. **Promtail** lit ces logs, ajoute des labels, et les envoie à **Loki**.
 3. **Grafana** (datasource Loki) permet de rechercher/filtrer.
 
-## Où regarder quand “je ne vois rien”
-
-- **Traces vides dans Tempo**:
-  - Vérifier que `otel-collector` tourne et n’a pas d’erreur de config.
-  - Vérifier que les services ont bien `OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318` dans `.env`.
-  - Générer du trafic (register/login) et vérifier que `resource.service.name` remonte.
-
-- **Métriques absentes**:
-  - Vérifier que `/metrics` répond sur les services.
-  - Vérifier les `scrape_configs` dans `infra/prometheus/prometheus.yml`.
-
-- **Logs absents dans Loki**:
-  - Vérifier que `promtail` tourne et a accès aux volumes Docker.
-  - Vérifier la config `infra/promtail/promtail-config.yml` et `infra/loki/loki-config.yml`.
 
 ## Ports (récap)
 

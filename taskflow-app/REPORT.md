@@ -118,16 +118,19 @@ Procédure de preuve:
 
 Capture attendue: *même traceId trouvé côté Tempo et côté Loki*.
 
-## 4) Démarche d’investigation (exemple “pic d’erreurs”)
+## 4) Démarche d’investigation
 
 1. **Métriques**: identifier quel service/route explose (erreurs 5xx, latence p95/p99).
 2. **Logs**: filtrer `level="error"` + `statusCode >= 500` sur ce service pour obtenir le message et le contexte.
 3. **Traces**: isoler des spans en erreur ou lents pour localiser l’appel précis (gateway → service → DB).
 4. **Hypothèse / action**: confirmer (ex: timeouts DB, upstream 502, payload invalide) et proposer un correctif.
 
-## 5) Justification de choix (exemples)
+## 5) Justification de choix
 
-- **OTLP gRPC Collector → Tempo**: plus performant pour le trafic inter-conteneurs.
-- **Pino JSON**: parsing simple côté Promtail + requêtes LogQL fiables.
-- **Dashboards versionnés**: reproductibilité (important pour la grille).
+- **OTel Collector**: on l’a placé entre les services et Tempo pour centraliser l’export OTLP, appliquer du batching et garder une config d’observabilité découplée du code applicatif.
+- **OTLP gRPC vers Tempo**: ce choix est plus adapté aux échanges inter-conteneurs, avec moins d’overhead que HTTP, tout en restant standard OpenTelemetry.
+- **Prometheus sur `/metrics`**: le modèle pull est simple à diagnostiquer, car Prometheus expose immédiatement dans les Targets si un service est bien scrapé ou non.
+- **Logs JSON avec Pino**: ce format rend les logs faciles à parser dans Promtail et permet des requêtes LogQL fiables sur `level`, `statusCode` ou `trace_id`.
+- **Ajout de `trace_id` dans les logs**: cela permet de corréler rapidement une erreur Loki avec la trace distribuée correspondante dans Tempo.
+- **Dashboards versionnés et provisionnés**: ce choix garantit une stack reproductible, ce qui est important pour la grille car l’enseignant retrouve directement les mêmes dashboards au démarrage.
 
