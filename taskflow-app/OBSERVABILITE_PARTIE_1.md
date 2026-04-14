@@ -146,7 +146,7 @@ Créer `docker-compose.infra.yml` avec :
 - Tempo : `3200:3200`
 - OTel Collector : `4317:4317`, `4318:4318`, `8888:8888`
 - Prometheus : `9090:9090`
-- Grafana : `3100:3000`
+- Grafana : `3300:3000`
 
 ### 6.4. Volumes (persistance)
 - `prometheus_data:/prometheus`

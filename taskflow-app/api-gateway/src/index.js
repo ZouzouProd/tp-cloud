@@ -4,6 +4,7 @@ const express = require("express");
 const { createProxyMiddleware } = require("http-proxy-middleware");
 const pino = require("pino");
 const pinoHttp = require("pino-http");
+const { context, trace } = require("@opentelemetry/api");
 const authMiddleware = require("./auth");
 
 const ERROR_CODE = 500;
@@ -21,6 +22,11 @@ const NOTIFICATION_SERVICE_URL =
 app.use(
   pinoHttp({
     logger,
+    customProps: () => {
+      const activeSpan = trace.getSpan(context.active());
+      const trace_id = activeSpan?.spanContext().traceId;
+      return trace_id ? { trace_id } : {};
+    },
     customLogLevel: (req, res) => {
       if (res.statusCode >= ERROR_CODE) return "error";
       return "info";

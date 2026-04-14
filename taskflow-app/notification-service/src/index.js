@@ -3,6 +3,7 @@ const { register, metricsMiddleware } = require("./metrics");
 const express = require("express");
 const pino = require("pino");
 const pinoHttp = require("pino-http");
+const { context, trace } = require("@opentelemetry/api");
 const {
   startSubscriber,
   getNotifications,
@@ -18,6 +19,11 @@ app.use(express.json());
 app.use(
   pinoHttp({
     logger,
+    customProps: () => {
+      const activeSpan = trace.getSpan(context.active());
+      const trace_id = activeSpan?.spanContext().traceId;
+      return trace_id ? { trace_id } : {};
+    },
     customLogLevel: (req, res) => {
       if (res.statusCode >= ERROR_CODE) return "error";
       return "info";
