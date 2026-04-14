@@ -1,6 +1,8 @@
+name: taskflow
 services:
   tempo:
-    image: grafana/tempo:latest
+    # Tempo "classic" monolithic config (sans Kafka obligatoire)
+    image: grafana/tempo:2.9.0
     ports:
       - "3200:3200" # API/UI (Grafana interroge ce port)
     volumes:
