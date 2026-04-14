@@ -35,7 +35,7 @@ scrape_configs:
             level: level
             msg: msg
             statusCode: statusCode
-            traceId: trace_id
+            trace_id: trace_id
       - template:
           source: level
           template: '{{ if eq .Value "30" }}info{{ else if eq .Value "40" }}warn{{ else if eq .Value "50" }}error{{ else }}{{ .Value }}{{ end }}'
@@ -44,4 +44,4 @@ scrape_configs:
           service:
       - structured_metadata:
           statusCode:
-          traceId:
+          trace_id:

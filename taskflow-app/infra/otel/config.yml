@@ -10,9 +10,11 @@ processors:
   batch: {}
 
 exporters:
-  # Envoi des traces vers Tempo via OTLP HTTP (plus simple à déboguer)
-  otlphttp/tempo:
-    endpoint: http://tempo:4318
+  # Envoi des traces vers Tempo via OTLP gRPC (plus performant en réseau inter-services)
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
 
   # Export console pour déboguer (collector-contrib: debug exporter)
   debug:
@@ -37,7 +39,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlphttp/tempo, debug]
+      exporters: [otlp/tempo, debug]
 
     metrics:
       receivers: [otlp]
