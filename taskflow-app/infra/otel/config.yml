@@ -10,11 +10,9 @@ processors:
   batch: {}
 
 exporters:
-  # Envoi des traces vers Tempo via OTLP gRPC (plus performant qu'HTTP)
-  otlp/tempo:
-    endpoint: tempo:4317
-    tls:
-      insecure: true
+  # Envoi des traces vers Tempo via OTLP HTTP (plus simple à déboguer)
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
 
   # Export console pour déboguer (collector-contrib: debug exporter)
   debug:
@@ -28,13 +26,18 @@ service:
   telemetry:
     metrics:
       # Métriques internes du collector (scrapées par Prometheus)
-      address: 0.0.0.0:8888
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
 
   pipelines:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/tempo, debug]
+      exporters: [otlphttp/tempo, debug]
 
     metrics:
       receivers: [otlp]

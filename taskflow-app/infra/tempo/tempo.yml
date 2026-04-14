@@ -9,6 +9,17 @@ distributor:
         # Communication Collector -> Tempo via gRPC (plus performant qu'HTTP)
         grpc:
           endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+# Nécessaire en mode single-binary (Tempo >= 2.10) pour activer un chemin d'écriture
+# sans Kafka. Sans ce bloc, Tempo peut échouer au démarrage.
+ingester:
+  max_block_duration: 5m
+
+compactor:
+  compaction:
+    block_retention: 720h
           
 storage:
   trace:
