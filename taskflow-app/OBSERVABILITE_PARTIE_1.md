@@ -1,224 +1,894 @@
-# Observabilité — Partie 1 (OTel + Tempo + Prometheus + Grafana)
+# TaskFlow — Partie 1 : Mise en place de l'observabilité
 
-Ce document récapitule **étape par étape** ce qui a été mis en place dans le TP, ainsi que les **problèmes rencontrés** et leurs **correctifs**.
+**Auteurs :** Naël BENHIBA et Corentin GESSE--ENTRESSANGLE
 
-## 1) Instrumentation OpenTelemetry (Node.js)
+## Objectif
 
-### 1.1. Objectif
-- Générer des **traces distribuées** (HTTP/Express + PostgreSQL + HTTP client).
-- Exporter les **traces** (et métriques OTLP si activées) vers un **OTel Collector** via **OTLP HTTP**.
-- Ajouter les **ressources** (service.name…) pour distinguer les services dans Tempo.
-- Garantir un **shutdown propre** pour ne pas perdre les spans en attente.
+Instrumenter l'application TaskFlow avec une stack d'observabilité complète (métriques, logs, traces) et créer des dashboards Grafana pour surveiller l'application.
 
-### 1.2. Fichiers créés / remplacés
-Chaque service backend a un `src/tracing.js` initialisé via le SDK Node.
+---
 
+## A. Instrumentation de l'application
+
+### Configuration OpenTelemetry
+
+Chaque service backend a été instrumenté avec le SDK OpenTelemetry pour Node.js.
+
+**Fichiers créés:**
 - `api-gateway/src/tracing.js`
 - `user-service/src/tracing.js`
 - `task-service/src/tracing.js`
 - `notification-service/src/tracing.js`
 
-Et chaque service appelle le tracing **avant** de charger Express / routes :
-- `require("./tracing");` est tout en haut de `src/index.js`
+**Configuration commune:**
 
-### 1.3. Points clés de l’implémentation
-- **NodeSDK** (`@opentelemetry/sdk-node`)
-- **Resource** avec les attributs sémantiques :
-  - `service.name` (ex: `api-gateway`, `user-service`…)
-  - `service.version` (défaut `1.0.0`)
-  - `deployment.environment` (si `NODE_ENV` ou `OTEL_DEPLOYMENT_ENVIRONMENT`)
-- **Exporters OTLP HTTP** :
-  - traces → `OTLPTraceExporter`
-  - metrics → `OTLPMetricExporter` + `PeriodicExportingMetricReader`
-- **Auto-instrumentations** :
-  - HTTP, Express, PG
-- **Shutdown** :
-  - écoute `SIGTERM` / `SIGINT`
-  - appelle `sdk.shutdown()` pour flush avant sortie
+```javascript
+const { NodeSDK } = require("@opentelemetry/sdk-node");
+const { getNodeAutoInstrumentations } = require("@opentelemetry/auto-instrumentations-node");
+const { OTLPTraceExporter } = require("@opentelemetry/exporter-trace-otlp-http");
+const { OTLPMetricExporter } = require("@opentelemetry/exporter-metrics-otlp-http");
+const { PeriodicExportingMetricReader } = require("@opentelemetry/sdk-metrics");
+const { Resource } = require("@opentelemetry/resources");
+const { SEMRESATTRS_SERVICE_NAME, SEMRESATTRS_SERVICE_VERSION } = require("@opentelemetry/semantic-conventions");
 
-### 1.4. Variables d’environnement utiles
-- `OTEL_EXPORTER_OTLP_ENDPOINT` (ex: `http://otel-collector:4318`)
-- ou `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` / `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`
-- `OTEL_SERVICE_NAME`, `OTEL_SERVICE_VERSION`
-- `OTEL_DEPLOYMENT_ENVIRONMENT`
+const sdk = new NodeSDK({
+  resource: new Resource({
+    [SEMRESATTRS_SERVICE_NAME]: "service-name",
+    [SEMRESATTRS_SERVICE_VERSION]: "1.0.0",
+  }),
+  traceExporter: new OTLPTraceExporter({ 
+    url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT + '/v1/traces' 
+  }),
+  metricReader: new PeriodicExportingMetricReader({
+    exporter: new OTLPMetricExporter({ 
+      url: process.env.OTEL_EXPORTER_OTLP_ENDPOINT + '/v1/metrics' 
+    }),
+  }),
+  instrumentations: [
+    getNodeAutoInstrumentations({
+      "@opentelemetry/instrumentation-http": { enabled: true },
+      "@opentelemetry/instrumentation-express": { enabled: true },
+      "@opentelemetry/instrumentation-pg": { enabled: true },
+    }),
+  ],
+});
 
-> Note : dans notre code, si `OTEL_EXPORTER_OTLP_ENDPOINT` finit par `/`, on le normalise, puis on utilise `/v1/traces` et `/v1/metrics`.
+Promise.resolve(sdk.start()).catch((err) => {
+  console.error("OpenTelemetry SDK failed to start", err);
+});
 
-## 2) Configuration de l’OTel Collector
+// Shutdown propre
+process.on("SIGTERM", () => sdk.shutdown());
+process.on("SIGINT", () => sdk.shutdown());
+```
 
-### 2.1. Objectif
-Recevoir les données en **OTLP (gRPC + HTTP)**, les **batcher**, puis :
-- envoyer les **traces** vers **Tempo** en **OTLP gRPC (4317)** (plus performant),
-- exporter en **console** pour debug,
-- exposer les **metrics** pour que Prometheus puisse les **scraper**.
+**Points clés:**
+- ✅ Initialisation du SDK avant le chargement d'Express
+- ✅ Configuration des ressources (service.name, service.version)
+- ✅ Export OTLP HTTP vers le collecteur
+- ✅ Auto-instrumentation HTTP, Express, PostgreSQL
+- ✅ Shutdown propre pour flush les traces en attente
 
-### 2.2. Fichier modifié
-- `infra/otel/config.yml`
+### Configuration OTel Collector
 
-### 2.3. Contenu (résumé)
-- **receiver** `otlp` :
-  - gRPC `0.0.0.0:4317`
-  - HTTP `0.0.0.0:4318`
-- **processor** : `batch`
-- **exporters** :
-  - `otlp/tempo` → `tempo:4317` (TLS insecure en réseau docker)
-  - `debug` (console)
-  - `prometheus` → `0.0.0.0:8889` (expose les métriques reçues en OTLP)
-- **service.telemetry.metrics.address** : `0.0.0.0:8888` (métriques internes du collector)
-- **pipelines** :
-  - `traces`: `otlp` → `batch` → `otlp/tempo` + `debug`
-  - `metrics`: `otlp` → `batch` → `prometheus` + `debug`
+**Fichier:** `infra/otel/config.yml`
 
-## 3) Configuration Tempo
+```yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
 
-### 3.1. Objectif
-- Exposer l’API/UI Tempo sur **3200** (utilisé par Grafana).
-- Recevoir les traces via **OTLP gRPC 4317**.
-- Stocker **en local** avec **WAL** (Write-Ahead Log).
+processors:
+  batch: {}
 
-### 3.2. Fichier modifié
-- `infra/tempo/tempo.yml`
+exporters:
+  otlp:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  debug:
+    verbosity: detailed
+  prometheus:
+    endpoint: 0.0.0.0:8889
 
-### 3.3. Contenu (résumé)
-- `server.http_listen_port: 3200`
-- receiver `otlp.grpc.endpoint: 0.0.0.0:4317`
-- stockage local :
-  - `storage.trace.backend: local`
-  - `storage.trace.local.path: /tmp/tempo/traces`
-- WAL :
-  - `storage.trace.wal.path: /tmp/tempo/wal`
+service:
+  telemetry:
+    metrics:
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [prometheus, debug]
+```
 
-## 4) Configuration Prometheus
+**Rôle du collecteur:**
+- Centraliser la réception des données OTLP
+- Appliquer du batching pour réduire l'overhead
+- Router vers différents backends (Tempo, Prometheus)
+- Exposer ses propres métriques internes
 
-### 4.1. Objectif
-- Ajouter la config `global`.
-- Scraper les métriques de chaque service (endpoints `/metrics`).
-- Scraper les métriques internes du collector (port **8888**).
+### Configuration Tempo
 
-### 4.2. Fichier modifié
-- `infra/prometheus/prometheus.yml`
+**Fichier:** `infra/tempo/tempo.yml`
 
-### 4.3. Contenu (résumé)
-- `global.scrape_interval: 15s`
-- `global.evaluation_interval: 15s`
-- `scrape_configs` :
-  - `api-gateway:3000`
-  - `user-service:3001`
-  - `task-service:3002`
-  - `notification-service:3003`
-  - `otel-collector:8888` (métriques internes du collector)
+```yaml
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9095
 
-## 5) Configuration Grafana (provisioning)
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
 
-### 5.1. Objectif
-Configurer automatiquement :
-- les **datasources** (Prometheus + Tempo),
-- le **chargement automatique des dashboards**.
+ingester:
+  max_block_duration: 5m
 
-### 5.2. Fichiers créés
-- `infra/grafana/provisioning/datasources/datasources.yml`
-  - Prometheus → `http://prometheus:9090` (default)
-  - Tempo → `http://tempo:3200`
+compactor:
+  compaction:
+    block_retention: 720h
+          
+storage:
+  trace:
+    backend: local
+    local:
+      path: /tmp/tempo/traces
+    wal:
+      path: /tmp/tempo/wal
+```
 
-- `infra/grafana/provisioning/dashboard/dashboard.yml`
-  - provider de dashboards depuis `path: /etc/grafana/dashboards`
+**Configuration:**
+- ✅ API/UI sur port 3200 (utilisé par Grafana)
+- ✅ Réception OTLP gRPC sur 4317 (plus performant)
+- ✅ Stockage local avec WAL (Write-Ahead Log)
+- ✅ Rétention de 30 jours (720h)
 
-> Note : un fichier `infra/grafana/provisioning/dashboards/dashboard.yml` existe aussi (même contenu). Grafana utilise le dossier `/etc/grafana/provisioning/`; le chemin “officiel” est généralement `provisioning/dashboards/…`, mais le TP demandait explicitement `provisioning/dashboard/dashboard.yml`.
+### Configuration Prometheus
 
-### 5.3. Dossier dashboards
-- `infra/grafana/dashboards/` (avec `.gitkeep`)
-- Les JSON exportés depuis l’UI Grafana doivent être déposés ici pour être auto-chargés.
+**Fichier:** `infra/prometheus/prometheus.yml`
 
-## 6) Docker Compose Infra
+```yaml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
 
-### 6.1. Objectif
-Créer `docker-compose.infra.yml` avec :
-- `otel-collector`
-- `tempo`
-- `prometheus`
-- `grafana`
-… et des volumes pour persister Prometheus + Grafana.
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
 
-### 6.2. Fichier créé / complété
-- `docker-compose.infra.yml`
+  - job_name: api-gateway
+    static_configs:
+      - targets: ["api-gateway:3000"]
 
-### 6.3. Ports exposés (résumé)
-- Tempo : `3200:3200`
-- OTel Collector : `4317:4317`, `4318:4318`, `8888:8888`
-- Prometheus : `9090:9090`
-- Grafana : `3300:3000`
+  - job_name: user-service
+    static_configs:
+      - targets: ["user-service:3001"]
 
-### 6.4. Volumes (persistance)
-- `prometheus_data:/prometheus`
-- `grafana_data:/var/lib/grafana`
+  - job_name: task-service
+    static_configs:
+      - targets: ["task-service:3002"]
 
-### 6.5. Dépendances
-Un `depends_on` est défini pour limiter les erreurs au démarrage :
-- collector dépend de tempo
-- prometheus dépend du collector
-- grafana dépend de prometheus + tempo
+  - job_name: notification-service
+    static_configs:
+      - targets: ["notification-service:3003"]
 
-> Note : `depends_on` garantit l’ordre, pas la “health”. Pour du “zéro erreur au démarrage”, il faudrait ajouter des `healthcheck` + `condition: service_healthy`.
+  - job_name: otel-collector-internal
+    static_configs:
+      - targets: ["otel-collector:8888"]
+```
 
-## 7) Problèmes rencontrés et solutions
+**Configuration:**
+- ✅ Scrape toutes les 15 secondes
+- ✅ Chaque service expose `/metrics` avec prom-client
+- ✅ Métriques internes du collecteur également scrapées
 
-### 7.1. `TypeError: Cannot read properties of undefined (reading 'catch')` dans `tracing.js`
-**Symptôme** : crash au démarrage sur :
-`sdk.start().catch(...)`
+### Configuration Grafana
 
-**Cause** : selon les versions, `sdk.start()` ne renvoie pas toujours une Promise.
+**Fichier:** `infra/grafana/provisioning/datasources/datasources.yml`
 
-**Fix** : encapsuler avec :
-`Promise.resolve(sdk.start()).catch(...)`
+```yaml
+apiVersion: 1
 
-### 7.2. `Cannot find module 'prom-client'`
-**Symptôme** : crash des services sur `require("prom-client")` dans `src/metrics.js`.
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
 
-**Cause** : `prom-client` n’était pas listé dans les `dependencies`.
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      httpMethod: GET
+      tracesToLogsV2:
+        datasourceUid: loki
+      tracesToMetrics:
+        datasourceUid: prometheus
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true
 
-**Fix** :
-- ajout de `prom-client` dans :
-  - `api-gateway/package.json`
-  - `user-service/package.json`
-  - `task-service/package.json`
-  - `notification-service/package.json`
+  - name: Loki
+    type: loki
+    uid: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: "trace_id[\":]\\s*([a-f0-9]+)"
+          name: TraceID
+          url: "$${__value.raw}"
+```
 
-### 7.3. `npm ci` échoue dans Docker (`package-lock.json` pas synchronisé)
-**Symptôme** : build Docker fail sur `npm ci --omit=dev` avec erreurs “lock file not in sync”.
+**Configuration:**
+- ✅ Provisioning automatique des datasources
+- ✅ Corrélation traces ↔ logs via trace_id
+- ✅ Corrélation traces ↔ métriques
+- ✅ Service map et node graph activés
 
-**Cause** : repo en **npm workspaces** + lockfile racine, et les `package-lock.json` “locaux” n’étaient pas à jour pour le build de chaque service.
+---
 
-**Fix appliqué** :
-- mise à jour des lockfiles **par service** :
-  - `npm install --package-lock-only --workspaces=false` dans chaque service
+## B. Métriques métier et dashboards
 
-### 7.4. Panic `docker compose up --build` (trace OpenTelemetry côté CLI)
-**Symptôme** : `docker compose up -d --build` panique avec un stacktrace Go OpenTelemetry.
+### Métriques ajoutées
 
-**Cause** : bug côté binaire `docker compose` (instrumentation interne), pas lié au code du TP.
+**task-service (`task-service/src/metrics.js`):**
+```javascript
+const tasksCreatedTotal = new Counter({
+  name: 'tasks_created_total',
+  help: 'Total number of tasks created',
+  labelNames: ['priority']
+});
 
-**Workaround** :
-- éviter `docker compose --build` et utiliser :
-  - `docker build ...` (legacy builder) pour les images
-  - puis `docker compose up -d` pour relancer les conteneurs
+const tasksStatusChangesTotal = new Counter({
+  name: 'tasks_status_changes_total',
+  help: 'Total number of task status changes',
+  labelNames: ['from_status', 'to_status']
+});
 
-### 7.5. `notification-service` spam `ECONNREFUSED 127.0.0.1:6379`
-**Symptôme** : erreurs Redis en boucle.
+const tasksGauge = new Gauge({
+  name: 'tasks_gauge',
+  help: 'Current number of tasks by status',
+  labelNames: ['status']
+});
+```
 
-**Cause** : dans Docker, `localhost` pointe vers le **conteneur lui-même**, pas vers le service `redis`.
+**user-service (`user-service/src/metrics.js`):**
+```javascript
+const userRegistrationsTotal = new Counter({
+  name: 'user_registrations_total',
+  help: 'Total number of user registrations'
+});
 
-**Fix** :
-- `notification-service/src/subscriber.js`: défaut `REDIS_URL` → `redis://redis:6379`
-- `task-service/src/publisher.js`: défaut `REDIS_URL` → `redis://redis:6379`
+const userLoginAttemptsTotal = new Counter({
+  name: 'user_login_attempts_total',
+  help: 'Total number of login attempts',
+  labelNames: ['success']
+});
+```
 
-## 8) Comment lancer
+**api-gateway (`api-gateway/src/metrics.js`):**
+```javascript
+const upstreamErrorsTotal = new Counter({
+  name: 'upstream_errors_total',
+  help: 'Total number of upstream errors (502)',
+  labelNames: ['service']
+});
+```
 
-### 8.1. Infra (collector + tempo + prometheus + grafana)
-Depuis la racine :
-- `docker compose -f docker-compose.infra.yml up -d`
+**notification-service (`notification-service/src/metrics.js`):**
+```javascript
+const notificationsSentTotal = new Counter({
+  name: 'notifications_sent_total',
+  help: 'Total number of notifications sent',
+  labelNames: ['event_type']
+});
+```
 
-### 8.2. App
-- `docker compose up -d`
+### Dashboards Grafana
 
-> Si tu dois rebuild, préfère : `docker build ...` puis `docker compose up -d` (cf. bug `docker compose --build`).
+**Dashboard 1: Services Overview**
+- Taux de requêtes par service (req/s)
+- Latence p50/p95/p99
+- Taux d'erreurs 5xx
+- Statut des services (up/down)
 
+**Dashboard 2: TaskFlow Business Metrics**
+- Tâches créées par minute
+- Répartition des tâches par priorité
+- Transitions de statut
+- Tentatives de connexion (succès vs échecs)
+
+Les dashboards sont versionnés dans `infra/grafana/dashboards/` et provisionnés automatiquement au démarrage.
+
+---
+
+## C. Traces distribuées
+
+### Compréhension des traces
+
+**Scénario testé:** POST `/api/tasks` depuis le frontend
+
+**Chaîne de spans observée:**
+```
+api-gateway (POST /api/tasks)
+  └─> task-service (POST /tasks)
+      ├─> PostgreSQL (INSERT INTO tasks)
+      └─> Redis (PUBLISH task.created)
+```
+
+**Attributs observés dans les spans:**
+
+| Attribut | Valeur exemple | Description |
+|----------|----------------|-------------|
+| `http.method` | POST | Méthode HTTP |
+| `http.route` | /api/tasks | Route Express |
+| `http.status_code` | 201 | Code de statut HTTP |
+| `http.target` | /api/tasks | URL complète |
+| `db.system` | postgresql | Type de base de données |
+| `db.statement` | INSERT INTO tasks... | Requête SQL exécutée |
+| `db.name` | taskflow | Nom de la base |
+| `net.peer.name` | postgres | Hôte de la base |
+
+**Analyse:**
+- ✅ La trace montre clairement le chemin de la requête
+- ✅ On peut identifier le temps passé dans chaque service
+- ✅ Les requêtes SQL sont visibles (utile pour détecter les N+1)
+- ✅ Le trace_id permet de corréler avec les logs
+
+### Ajout de spans custom
+
+**Fichier modifié:** `task-service/src/routes.js`
+
+```javascript
+const { trace } = require('@opentelemetry/api');
+const tracer = trace.getTracer('task-service');
+
+// Dans la route POST /tasks
+const span = tracer.startSpan('publish.task.created');
+try {
+  await publish("task.created", { 
+    taskId: task.id, 
+    title: task.title,
+    priority: task.priority 
+  });
+  span.setStatus({ code: 1 }); // OK
+} catch (error) {
+  span.setStatus({ code: 2, message: error.message }); // ERROR
+  span.recordException(error);
+  throw error;
+} finally {
+  span.end();
+}
+```
+
+**Résultat:**
+- ✅ Le span `publish.task.created` apparaît dans la trace
+- ✅ On peut mesurer le temps de publication Redis
+- ✅ Les erreurs Redis sont capturées dans le span
+
+---
+
+## D. Logs avec Loki
+
+### Configuration Loki
+
+**Fichier:** `infra/loki/loki-config.yml`
+
+```yaml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2020-10-24
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+```
+
+### Configuration Promtail
+
+**Fichier:** `infra/promtail/promtail-config.yml`
+
+```yaml
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: 'container'
+      - source_labels: ['__meta_docker_container_log_stream']
+        target_label: 'stream'
+    pipeline_stages:
+      - json:
+          expressions:
+            level: level
+            msg: msg
+            trace_id: trace_id
+            service: service_name
+      - labels:
+          level:
+          service:
+          trace_id:
+      - template:
+          source: level
+          template: '{{ if eq .Value "30" }}info{{ else if eq .Value "40" }}warn{{ else if eq .Value "50" }}error{{ else }}{{ .Value }}{{ end }}'
+      - labels:
+          detected_level:
+      - output:
+          source: msg
+```
+
+**Configuration:**
+- ✅ Lecture des logs Docker via socket
+- ✅ Parsing JSON Pino automatique
+- ✅ Conversion des niveaux numériques (30→info, 40→warn, 50→error)
+- ✅ Extraction du trace_id pour corrélation
+
+### Questions et réponses - Logs
+
+#### Question 1 — Dans Grafana > Explore, sélectionner la datasource Loki, filtrer les logs du task-service uniquement. Quelle syntaxe LogQL est utilisée ? Quelle différence y a-t-il avec une requête Prometheus ?
+
+**Réponse:**
+
+**Syntaxe LogQL:**
+```logql
+{service="task-service"} | json
+```
+
+**Différences avec PromQL:**
+
+| Aspect | LogQL (Loki) | PromQL (Prometheus) |
+|--------|--------------|---------------------|
+| **Type de données** | Logs (texte) | Métriques (nombres) |
+| **Sélection** | Labels entre `{}` | Labels entre `{}` |
+| **Filtrage** | Pipes `\|` pour parser/filtrer | Fonctions d'agrégation |
+| **Résultat** | Lignes de logs | Séries temporelles |
+| **Exemple** | `{service="task-service"} \| json \| level="error"` | `rate(http_requests_total{job="task-service"}[5m])` |
+
+**Similarités:**
+- Les deux utilisent des **label selectors** `{key="value"}`
+- Les deux supportent les regex `{service=~"task.*"}`
+- Les deux peuvent être combinés avec des opérateurs logiques
+
+#### Question 2 — Déclencher une erreur volontairement (ex: créer une tâche sans title). Retrouver le log d'erreur correspondant dans Loki. Quelle requête utiliser pour filtrer ?
+
+**Réponse:**
+
+**Requête LogQL pour filtrer les erreurs:**
+```logql
+{service="task-service"} | json | level="error"
+```
+
+**Ou pour filtrer sur le code HTTP 400:**
+```logql
+{service="task-service"} | json | statusCode = 400
+```
+
+**Ou pour chercher un message spécifique:**
+```logql
+{service="task-service"} | json | msg =~ ".*title.*"
+```
+
+**Log observé:**
+```json
+{
+  "level": 50,
+  "time": 1777889234567,
+  "pid": 1,
+  "hostname": "task-service-1",
+  "req": {
+    "method": "POST",
+    "url": "/tasks"
+  },
+  "err": {
+    "type": "ValidationError",
+    "message": "Title is required"
+  },
+  "msg": "Validation failed",
+  "trace_id": "abc123..."
+}
+```
+
+#### Question 3 — Écrire une requête LogQL qui affiche uniquement les logs de niveau error sur tous les services à la fois. Écrire une requête qui extrait et filtre sur le champ statusCode pour ne voir que les requêtes ayant retourné un 500.
+
+**Réponse:**
+
+**Tous les logs d'erreur (tous services):**
+```logql
+{service=~".+"} | json | level="error"
+```
+
+**Tous les logs avec statusCode 500:**
+```logql
+{service=~".+"} | json | statusCode >= 500
+```
+
+**Ou plus précisément pour 500 uniquement:**
+```logql
+{service=~".+"} | json | statusCode = 500
+```
+
+#### Question 4 — Comparer: Dans Prometheus `http_requests_total{status="500"}` vs dans Loki, comment obtenir l'équivalent en passant par les logs ? Entre ces deux approches, laquelle est la plus adaptée et pourquoi ?
+
+**Réponse:**
+
+**Prometheus (métriques):**
+```promql
+rate(http_requests_total{status="500"}[5m])
+```
+
+**Loki (logs):**
+```logql
+rate({service=~".+"} | json | statusCode = 500 [5m])
+```
+
+**Comparaison:**
+
+| Critère | Prometheus (Métriques) | Loki (Logs) |
+|---------|------------------------|-------------|
+| **Performance** | ✅ Très rapide (données agrégées) | ❌ Plus lent (scan de logs) |
+| **Précision** | ✅ Compteur exact | ⚠️ Dépend du parsing |
+| **Cardinalité** | ✅ Faible (labels limités) | ❌ Élevée (chaque log unique) |
+| **Coût stockage** | ✅ Faible (séries temporelles) | ❌ Élevé (texte complet) |
+| **Contexte** | ❌ Pas de détails | ✅ Message d'erreur complet |
+| **Alerting** | ✅ Idéal | ⚠️ Possible mais lent |
+
+**Quelle approche est la plus adaptée ?**
+
+✅ **Prometheus pour:**
+- Surveiller les **taux** d'erreurs
+- Créer des **alertes** (ex: taux 5xx > 1%)
+- Afficher des **graphes** de tendances
+- Calculer des **SLOs** (Service Level Objectives)
+
+✅ **Loki pour:**
+- **Investiguer** une erreur spécifique
+- Voir le **message d'erreur** complet
+- Corréler avec le **trace_id**
+- Comprendre le **contexte** (payload, user_id, etc.)
+
+**Conclusion:** Utiliser **Prometheus pour détecter** (alerting, dashboards) et **Loki pour diagnostiquer** (investigation, debugging).
+
+#### Question 5 — Effectuer une requête POST /api/tasks. Dans Tempo, retrouver la trace correspondante et noter son traceId. Peut-on retrouver ce traceId dans les logs Loki ? Que faudrait-il configurer pour que ce soit automatique ?
+
+**Réponse:**
+
+**Oui, on peut retrouver le trace_id dans Loki:**
+
+```logql
+{service=~".+"} | json | trace_id="abc123def456..."
+```
+
+**Configuration pour la corrélation automatique:**
+
+La corrélation est **déjà configurée** dans `datasources.yml`:
+
+```yaml
+datasources:
+  - name: Loki
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: "trace_id[\":]\\s*([a-f0-9]+)"
+          name: TraceID
+          url: "$${__value.raw}"
+```
+
+**Ce que ça fait:**
+- ✅ Grafana détecte automatiquement les trace_id dans les logs
+- ✅ Affiche un lien cliquable vers la trace dans Tempo
+- ✅ Permet de passer des logs → traces en un clic
+
+**Configuration inverse (Tempo → Loki):**
+
+```yaml
+datasources:
+  - name: Tempo
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-1h'
+        spanEndTimeShift: '1h'
+        filterByTraceID: true
+```
+
+**Ce que ça fait:**
+- ✅ Depuis une trace dans Tempo, cliquer sur "Logs for this span"
+- ✅ Grafana ouvre automatiquement Loki avec le bon trace_id
+- ✅ Corrélation bidirectionnelle traces ↔ logs
+
+#### Question 6 — Mettons que l'on observe un pic d'erreurs dans le dashboard Prometheus. Décrire la démarche pour investiguer : par où commencer, comment utiliser métriques, logs et traces ?
+
+**Réponse:**
+
+### Démarche d'investigation complète
+
+**Étape 1: DÉTECTER avec Prometheus (Métriques)**
+
+```promql
+# Identifier quel service a des erreurs
+sum by(job) (rate(http_requests_total{status=~"5.."}[5m]))
+
+# Identifier quelle route est impactée
+sum by(job, route) (rate(http_requests_total{status=~"5.."}[5m]))
+```
+
+**Observations:**
+- ✅ Service impacté: `task-service`
+- ✅ Route impactée: `POST /tasks`
+- ✅ Timing: pic à 14h32
+- ✅ Taux: 5% d'erreurs (normalement 0%)
+
+---
+
+**Étape 2: COMPRENDRE avec Loki (Logs)**
+
+```logql
+# Voir les erreurs du service
+{service="task-service"} | json | level="error"
+
+# Filtrer sur la période du pic
+{service="task-service"} | json | level="error" | line_format "{{.msg}}"
+
+# Filtrer sur les 500
+{service="task-service"} | json | statusCode >= 500
+```
+
+**Observations:**
+- ✅ Message d'erreur: `"Cannot connect to database"`
+- ✅ Erreur PostgreSQL: `ECONNREFUSED`
+- ✅ Fréquence: toutes les 2-3 secondes
+- ✅ trace_id disponible pour investigation détaillée
+
+---
+
+**Étape 3: LOCALISER avec Tempo (Traces)**
+
+```traceql
+# Chercher les traces en erreur du service
+{ resource.service.name = "task-service" && status = error }
+
+# Filtrer sur la route spécifique
+{ resource.service.name = "task-service" && span.http.route = "/tasks" && status = error }
+```
+
+**Observations dans la trace waterfall:**
+```
+api-gateway (POST /api/tasks) - 502ms
+  └─> task-service (POST /tasks) - 500ms
+      └─> PostgreSQL (INSERT) - 500ms ❌ TIMEOUT
+```
+
+**Analyse:**
+- ✅ Le span PostgreSQL prend 500ms (timeout)
+- ✅ Attribut `db.statement` montre la requête SQL
+- ✅ Pas de span Redis (la publication n'a pas eu lieu)
+- ✅ Le timeout se produit systématiquement
+
+---
+
+**Étape 4: DIAGNOSTIQUER**
+
+**Hypothèses:**
+1. PostgreSQL est down ou surchargé
+2. Connection pool épuisé
+3. Requête SQL lente (lock, missing index)
+4. Problème réseau entre task-service et postgres
+
+**Vérifications:**
+
+```bash
+# Vérifier que PostgreSQL est up
+docker ps | grep postgres
+
+# Vérifier les logs PostgreSQL
+docker logs taskflow-postgres-1 --tail 50
+
+# Vérifier les connexions actives
+docker exec taskflow-postgres-1 psql -U taskflow -c "SELECT count(*) FROM pg_stat_activity;"
+
+# Vérifier les métriques PostgreSQL dans Prometheus
+pg_stat_database_numbackends{datname="taskflow"}
+```
+
+---
+
+**Étape 5: CORRIGER**
+
+**Cause identifiée:** Connection pool épuisé (10 connexions max, 50 VUs)
+
+**Solution:**
+```javascript
+// task-service/src/db.js
+const pool = new Pool({
+  max: 20, // Augmenter de 10 à 20
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000, // Ajouter un timeout
+});
+```
+
+**Vérification post-fix:**
+- ✅ Taux d'erreur retombe à 0%
+- ✅ Latence p95 retourne à ~50ms
+- ✅ Plus de timeouts dans les logs
+
+---
+
+**Résumé de la démarche:**
+
+```
+1. MÉTRIQUES (Prometheus)  → Détecter le problème
+   "Taux d'erreurs 5xx sur task-service à 14h32"
+
+2. LOGS (Loki)             → Comprendre ce qui se passe
+   "Cannot connect to database - ECONNREFUSED"
+
+3. TRACES (Tempo)          → Localiser la requête exacte
+   "Timeout PostgreSQL après 500ms sur INSERT"
+
+4. DIAGNOSTIC             → Identifier la cause racine
+   "Connection pool épuisé: 10 connexions pour 50 VUs"
+
+5. CORRECTION             → Appliquer le fix
+   "Augmenter le pool à 20 connexions"
+```
+
+---
+
+## Problèmes rencontrés et solutions
+
+### 1. Erreur OTel Collector: `unknown type: "tempo"`
+
+**Symptôme:**
+```
+'exporters' unknown type: "tempo" for id: "tempo"
+```
+
+**Cause:** L'exporteur `tempo` n'existe pas dans OTel Collector. Il faut utiliser `otlp`.
+
+**Solution:**
+```yaml
+exporters:
+  otlp:  # ← Pas "tempo"
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+```
+
+### 2. Traces absentes dans Tempo
+
+**Symptôme:** Grafana affiche "No data" dans Tempo.
+
+**Causes possibles:**
+1. OTel Collector ne démarre pas (erreur de config)
+2. Services n'envoient pas vers le bon endpoint
+3. Tempo ne reçoit pas les traces
+
+**Solution:**
+```bash
+# Vérifier les logs du collector
+docker logs taskflow-otel-collector-1
+
+# Vérifier que les services envoient bien
+docker logs taskflow-api-gateway-1 | grep -i "otel\|trace"
+
+# Vérifier l'endpoint dans .env
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318
+```
+
+### 3. Prometheus ne voit qu'une seule target malgré plusieurs replicas
+
+**Symptôme:** Après `docker compose up --scale task-service=3`, Prometheus ne voit qu'une target.
+
+**Cause:** Configuration statique avec nom DNS (load balancing round-robin).
+
+**Solution:** Utiliser Kubernetes avec service discovery automatique (voir Partie 2).
+
+### 4. Logs Pino avec niveaux numériques
+
+**Symptôme:** Impossible de filtrer avec `level="error"` dans Loki.
+
+**Cause:** Pino utilise des niveaux numériques (30=info, 50=error).
+
+**Solution:** Pipeline Promtail pour convertir:
+```yaml
+pipeline_stages:
+  - template:
+      source: level
+      template: '{{ if eq .Value "30" }}info{{ else if eq .Value "50" }}error{{ end }}'
+```
+
+---
+
+## Conclusion Partie 1
+
+### Ce qui a été mis en place
+
+✅ **Traces distribuées:**
+- OpenTelemetry SDK dans tous les services
+- OTel Collector pour centraliser
+- Tempo pour stocker et visualiser
+- Spans custom pour Redis
+
+✅ **Métriques:**
+- Métriques HTTP (requêtes, latence, erreurs)
+- Métriques métier (tâches, users, notifications)
+- Prometheus pour scraper
+- 2 dashboards Grafana
+
+✅ **Logs:**
+- Logs JSON structurés avec Pino
+- Promtail pour collecter
+- Loki pour stocker
+- Corrélation logs ↔ traces via trace_id
+
+✅ **Observabilité complète:**
+- Corrélation métriques ↔ logs ↔ traces
+- Dashboards provisionnés automatiquement
+- Stack reproductible avec Docker Compose
+
+### Prochaines étapes (Partie 2)
+
+- Tests de charge avec k6
+- Analyse des performances sous charge
+- Identification des goulots d'étranglement
+- Tests de scaling horizontal
