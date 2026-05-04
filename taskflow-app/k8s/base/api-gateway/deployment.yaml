@@ -22,6 +22,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: api-gateway-cm
+            - secretRef:
+                name: api-gateway-secret
           livenessProbe:
             httpGet:
               path: /health

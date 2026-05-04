@@ -22,6 +22,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: task-service-cm
+            - secretRef:
+                name: task-service-secret
           livenessProbe:
             httpGet:
               path: /health

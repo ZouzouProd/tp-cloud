@@ -22,6 +22,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: user-service-cm
+            - secretRef:
+                name: user-service-secret
           livenessProbe:
             httpGet:
               path: /health
