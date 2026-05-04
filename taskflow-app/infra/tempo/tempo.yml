@@ -1,6 +1,8 @@
 server:
   # API HTTP interrogée par Grafana (et endpoints Tempo)
   http_listen_port: 3200
+  # Serveur gRPC pour Grafana
+  grpc_listen_port: 9095
 
 distributor:
   receivers:
