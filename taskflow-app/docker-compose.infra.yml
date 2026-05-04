@@ -5,6 +5,7 @@ services:
     image: grafana/tempo:2.9.0
     ports:
       - "3200:3200" # API/UI (Grafana interroge ce port)
+      - "9095:9095" # gRPC pour Grafana
     volumes:
       - ./infra/tempo/tempo.yml:/etc/tempo/tempo.yml
     command: ["-config.file=/etc/tempo/tempo.yml"]

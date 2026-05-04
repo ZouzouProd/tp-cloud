@@ -10,8 +10,8 @@ processors:
   batch: {}
 
 exporters:
-  # Envoi des traces vers Tempo via OTLP gRPC (plus performant en réseau inter-services)
-  otlp/tempo:
+  # Envoi des traces vers Tempo via OTLP
+  otlp:
     endpoint: tempo:4317
     tls:
       insecure: true
@@ -39,7 +39,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [otlp/tempo, debug]
+      exporters: [otlp, debug]
 
     metrics:
       receivers: [otlp]
