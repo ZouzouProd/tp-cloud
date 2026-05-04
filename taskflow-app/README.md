@@ -36,25 +36,87 @@ Architecture multi-services pour apprendre Kubernetes, l'observabilité et le CI
 - Docker + Docker Compose
 - Node.js + npm
 - k6 (pour les tests de charge) - optionnel
+- kind + kubectl (pour Kubernetes) - optionnel
 
 ### Installation
 ```bash
 npm run install:all
 ```
 
-### Lancer l'application
+### Option 1 : Lancer avec Docker Compose
+
+**Lancer l'application:**
 ```bash
 docker compose up -d
 ```
 - Frontend : `http://localhost:5173`
 - API Gateway : `http://localhost:3000/health`
 
-### Lancer l'observabilité
+**Lancer l'observabilité:**
 ```bash
 docker compose -f docker-compose.infra.yml up -d
 ```
 - Grafana : `http://localhost:3300` (admin/admin)
 - Prometheus : `http://localhost:9090`
+
+### Option 2 : Lancer avec Kubernetes (Partie 3)
+
+**1. Créer le cluster kind:**
+```bash
+kind create cluster --name taskflow --config k8s/kind-config.yaml
+kubectl create namespace staging
+```
+
+**2. Charger les images Docker:**
+```bash
+kind load docker-image taskflow-user-service:latest taskflow-task-service:latest taskflow-notification-service:latest taskflow-api-gateway:latest taskflow-frontend:latest --name taskflow
+```
+
+**3. Créer le ConfigMap pour init.sql:**
+```bash
+kubectl create configmap postgres-init-script --from-file=init.sql=scripts/init.sql -n staging
+```
+
+**4. Déployer tous les services:**
+```bash
+kubectl apply -f k8s/base/postgres/
+kubectl apply -f k8s/base/redis/
+kubectl apply -f k8s/base/user-service/
+kubectl apply -f k8s/base/task-service/
+kubectl apply -f k8s/base/notification-service/
+kubectl apply -f k8s/base/api-gateway/
+kubectl apply -f k8s/base/frontend/
+```
+
+**5. Installer l'Ingress controller:**
+```bash
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=90s
+kubectl patch deployment ingress-nginx-controller -n ingress-nginx --type='json' -p='[{"op":"add","path":"/spec/template/spec/nodeSelector/ingress-ready","value":"true"}]'
+kubectl rollout status deployment/ingress-nginx-controller -n ingress-nginx
+```
+
+**6. Déployer l'Ingress:**
+```bash
+kubectl apply -f k8s/base/ingress.yaml
+```
+
+**7. Accéder à l'application:**
+- Frontend : `http://localhost:8080`
+- API : `http://localhost:8080/api/health`
+
+**Note:** Le port 8080 est utilisé au lieu de 80 car le port 80 peut être occupé sur Windows.
+
+**Vérifier le déploiement:**
+```bash
+kubectl get all -n staging
+kubectl get pods -n staging -o wide
+```
+
+**Supprimer le cluster:**
+```bash
+kind delete cluster --name taskflow
+```
 
 ## Tests de charge (Partie 2)
 
@@ -123,8 +185,10 @@ docker compose up --scale task-service=3 -d
 
 - **[TP_PARTIE_1.md](TP_PARTIE_1.md)** - Guide complet du TP Partie 1 avec instructions détaillées
 - **[TP_PARTIE_2.md](TP_PARTIE_2.md)** - Guide du TP Partie 2 - Tests de charge avec k6
+- **[TP_PARTIE_3.md](TP_PARTIE_3.md)** - Guide du TP Partie 3 - Déploiement Kubernetes
 - **[OBSERVABILITE_PARTIE_1.md](OBSERVABILITE_PARTIE_1.md)** - Implémentation et résolution de problèmes Partie 1
 - **[OBSERVABILITE_PARTIE_2.md](OBSERVABILITE_PARTIE_2.md)** - Documentation complète des tests de charge et analyse
+- **[OBSERVABILITE_PARTIE_3.md](OBSERVABILITE_PARTIE_3.md)** - Documentation du déploiement Kubernetes
 - **[REPORT.md](REPORT.md)** - Rapport d'analyse et preuves d'observabilité
 - **[OBSERVABILITY_STACK.md](OBSERVABILITY_STACK.md)** - Architecture de la stack d'observabilité
 - **[grille-evaluation.md](grille-evaluation.md)** - Grille d'évaluation du TP
@@ -140,6 +204,9 @@ docker compose up --scale task-service=3 -d
 - **[Résumé k6 test réaliste](preuves/partie-2/k6-test-realistic-summary.png)** - Résultats du test avec 50 VUs
 - **[Grafana Services Overview](preuves/partie-2/grafana-services-overview.png)** - Panel Request Rate pendant le pic de charge
 - **[Prometheus Targets](preuves/partie-2/prometheus-targets.png)** - Limitation du service discovery avec Docker Compose
+
+### Partie 3 - Déploiement Kubernetes
+- Captures d'écran à ajouter dans `preuves/partie-3/`
 
 ## Guide d'observation
 
@@ -184,8 +251,16 @@ histogram_quantile(0.95, sum by(job, le) (rate(http_request_duration_ms_bucket[5
 
 ## Dépannage
 
+### Docker Compose
 - **Traces absentes** : vérifier `otel-collector` et `tempo`, config `OTEL_EXPORTER_OTLP_ENDPOINT`
 - **Logs absents** : vérifier `promtail` et accès Docker socket
 - **Dashboards non chargés** : vérifier montage `./infra/grafana/dashboards`
 - **k6 tests échouent** : vérifier que les services sont démarrés et accessibles sur le réseau Docker
 - **Scaling impossible** : vérifier que le port mapping est commenté dans `docker-compose.yml`
+
+### Kubernetes
+- **Pods en ImagePullBackOff** : charger les images avec `kind load docker-image`
+- **Pods en CrashLoopBackOff** : vérifier les logs avec `kubectl logs -n staging <pod-name>`
+- **Ingress ne répond pas** : vérifier que le controller est sur le control-plane avec `kubectl get pods -n ingress-nginx -o wide`
+- **Base de données vide** : vérifier que le ConfigMap `postgres-init-script` existe et est monté
+- **Port 80 occupé** : utiliser le port 8080 configuré dans `kind-config.yaml`
