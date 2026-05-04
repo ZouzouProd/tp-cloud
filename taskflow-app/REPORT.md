@@ -35,6 +35,28 @@ Contient :
 - [Grafana Services Overview](preuves/partie-2/grafana-services-overview.png)
 - [Prometheus Targets](preuves/partie-2/prometheus-targets.png)
 
+### Partie 3 — Déploiement Kubernetes
+**[OBSERVABILITE_PARTIE_3.md](OBSERVABILITE_PARTIE_3.md)**
+
+Contient :
+- Déploiement complet sur cluster kind (3 nœuds)
+- Réponses détaillées aux 15 questions théoriques du TP_PARTIE_3.md
+- Analyse Deployment vs StatefulSet
+- Dimensionnement des ressources et justifications
+- Investigation base de données (ConfigMap init.sql)
+- Explication Service vs Ingress
+- Scénarios d’observation (self-healing, readiness probe, rolling update)
+- Réflexion sur Helm/Kustomize
+
+**Captures d’écran :**
+- [Nœuds du cluster](preuves/partie-3/get-nodes.png)
+- [Pods déployés](preuves/partie-3/get-pods.png)
+- [StatefulSet PostgreSQL](preuves/partie-3/statefulset-pvc.png)
+- [Frontend accessible](preuves/partie-3/app-running-front.png)
+- [Tables PostgreSQL](preuves/partie-3/postgres-tables.png)
+- [Self-healing avant](preuves/partie-3/self-healing-before.png)
+- [Self-healing après](preuves/partie-3/self-healing-after.png)
+
 ## Architecture d’observabilité
 
 **[OBSERVABILITY_STACK.md](OBSERVABILITY_STACK.md)**

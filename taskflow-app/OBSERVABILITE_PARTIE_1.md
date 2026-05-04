@@ -892,3 +892,22 @@ pipeline_stages:
 - Analyse des performances sous charge
 - Identification des goulots d'étranglement
 - Tests de scaling horizontal
+
+---
+
+## Captures d'écran
+
+### Dashboard Services Overview
+![Services Grafana](preuves/partie-1/partie-b/02-graphana_services.png)
+
+Dashboard montrant les métriques clés de tous les services : request rate, latence p95/p99, erreurs 5xx, et statut des services.
+
+### Dashboard Taskflow Business
+![Tâches Grafana](preuves/partie-1/partie-b/03_graphana_tasks.png)
+
+Dashboard des métriques métier : nombre de tâches créées, distribution par priorité, et autres indicateurs business.
+
+### Prometheus Targets
+![Prometheus Targets](preuves/partie-1/partie-b/up_prometheus.png)
+
+Interface Prometheus montrant tous les services scrapés avec leur statut UP, confirmant que la collecte de métriques fonctionne correctement.
