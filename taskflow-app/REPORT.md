@@ -1,136 +1,68 @@
 # REPORT — TaskFlow (Observabilité)
 
-Ce document est le **rapport d’analyse** demandé par la grille d’évaluation : réponses théoriques + observations + preuves (commandes, requêtes Grafana) + démarche d’investigation.
+Ce document est le **rapport d’index** pour l’observabilité du projet TaskFlow. Il regroupe les liens vers les documentations détaillées de chaque partie du TP.
 
-> Les captures d’écran Grafana sont à ajouter dans ce fichier (ou un sous-dossier) au moment du rendu final.
+## Documentation complète
 
-## 1) Ce qui est en place (résumé)
+### Partie 1 — Mise en place de l’observabilité
+**[OBSERVABILITE_PARTIE_1.md](OBSERVABILITE_PARTIE_1.md)**
 
-- **Traces**: OpenTelemetry SDK dans chaque service Node.js → **OTel Collector** → **Tempo** → Grafana
-- **Métriques**: `/metrics` exposé par chaque service → **Prometheus** → Grafana
-- **Logs**: logs JSON (Pino) sur stdout Docker → **Promtail** → **Loki** → Grafana
-- **Dashboards**: versionnés dans `infra/grafana/dashboards/` et provisionnés automatiquement
+Contient :
+- Configuration complète de la stack d’observabilité (OpenTelemetry, OTel Collector, Tempo, Prometheus, Loki, Promtail, Grafana)
+- Réponses détaillées aux 6 questions du TP_PARTIE_1.md
+- Méthodologie d’investigation avec logs, traces et métriques
+- Problèmes rencontrés et solutions apportées
+- Exemples de requêtes LogQL, PromQL et TraceQL
 
-Schéma d’ensemble et explication détaillée: voir `OBSERVABILITY_STACK.md`.
+**Captures d’écran :**
+- [Services Grafana](preuves/partie-1/partie-b/02-graphana_services.png)
+- [Tâches Grafana](preuves/partie-1/partie-b/03_graphana_tasks.png)
+- [Prometheus Targets](preuves/partie-1/partie-b/up_prometheus.png)
 
-## 2) Réponses théoriques (synthèse)
+### Partie 2 — Tests de charge et scaling
+**[OBSERVABILITE_PARTIE_2.md](OBSERVABILITE_PARTIE_2.md)**
 
-### 2.1 Traces vs métriques vs logs
+Contient :
+- Tests de charge k6 (scénarios light et realistic)
+- Réponses détaillées aux 10 questions du TP_PARTIE_2.md
+- Analyse comparative des performances (1 vs 3 replicas)
+- Limitations de Docker Compose pour le scaling
+- Analyse des écarts de latence entre k6 et Grafana
+- Recommandations pour Kubernetes
 
-- **Traces**: un *chemin complet* d’une requête (waterfall), utile pour localiser **où** est le temps/erreur (service A → service B → DB).
-- **Métriques**: vues agrégées sur le temps (rates, percentiles, tendances). Idéal pour détecter un **changement** (pic d’erreurs, hausse de latence).
-- **Logs**: événements détaillés (erreurs applicatives, inputs/ids). Utile pour comprendre le **quoi** (message d’erreur, contexte métier).
+**Captures d’écran :**
+- [Résumé k6 test réaliste](preuves/partie-2/k6-test-realistic-summary.png)
+- [Grafana Services Overview](preuves/partie-2/grafana-services-overview.png)
+- [Prometheus Targets](preuves/partie-2/prometheus-targets.png)
 
-### 2.2 Pull vs push (Prometheus vs Loki)
+## Architecture d’observabilité
 
-- **Prometheus** fonctionne en **pull**: il scrape des endpoints `/metrics`. Avantage: modèle simple, résilience côté scrape, découverte de targets.
-- **Loki** reçoit en **push** via **Promtail**: les logs sont streamés et enrichis en labels.
+**[OBSERVABILITY_STACK.md](OBSERVABILITY_STACK.md)**
 
-### 2.3 Pourquoi un OTel Collector ?
+Schéma d’ensemble et explication détaillée de la stack :
+- **Traces**: OpenTelemetry SDK → OTel Collector → Tempo → Grafana
+- **Métriques**: `/metrics` → Prometheus → Grafana
+- **Logs**: stdout Docker → Promtail → Loki → Grafana
+- **Dashboards**: provisionnés automatiquement depuis `infra/grafana/dashboards/`
 
-Le collector permet de:
-- centraliser la sortie OTLP des services,
-- appliquer du **batching** (réduit overhead),
-- changer de backend (Tempo, autre) sans changer l’app,
-- exposer des métriques internes utiles (health du pipeline).
-
-## 3) Preuves (ce qui est observable dans Grafana)
-
-### 3.1 Démarrage reproductible
-
-Commandes (depuis `taskflow-app/`) :
+## Démarrage rapide
 
 ```bash
+# Lancer l’application
 docker compose up -d
+
+# Lancer la stack d’observabilité
 docker compose -f docker-compose.infra.yml up -d
 ```
 
-À constater :
-- Grafana accessible sur `http://localhost:3300` (admin/admin)
-- Datasources provisionnées: Prometheus, Tempo, Loki
-- Dashboards auto-chargés
+**Accès :**
+- Grafana : `http://localhost:3300` (admin/admin)
+- Prometheus : `http://localhost:9090`
+- Frontend : `http://localhost:5173`
 
-### 3.2 Métriques (Prometheus)
+## Grille d’évaluation
 
-#### (A) Vérifier que Prometheus scrape bien
+**[grille-evaluation.md](grille-evaluation.md)**
 
-Prometheus UI (`http://localhost:9090`) → Status → Targets :
-- `api-gateway`, `user-service`, `task-service`, `notification-service` en **UP**
-
-Capture attendue: *Targets UP*.
-
-#### (B) Requêtes PromQL utiles
-
-- **RPS par service**:
-  - `sum by (job) (rate(http_requests_total[5m]))`
-- **Erreurs 5xx par service**:
-  - `sum by (job) (rate(http_requests_total{status=~"5.."}[5m]))`
-- **Latence p95**:
-  - `histogram_quantile(0.95, sum by(job, le) (rate(http_request_duration_ms_bucket[5m])))`
-
-Capture attendue: *Explore Prometheus avec un graphe non vide*.
-
-### 3.3 Logs (Loki)
-
-Requêtes LogQL (Grafana → Explore → Loki) :
-
-- **Tous les logs d’un service**:
-  - `{service="task-service"} | json`
-- **Erreurs uniquement**:
-  - `{service=~".+"} | json | level="error"`
-- **Filtrer statusCode >= 500** (équivalent “par logs”):
-  - `{service=~".+"} | json | statusCode >= 500`
-
-Comparaison demandée (grille) :
-- métrique: `http_requests_total{status="500"}`
-- logs: `{service=~".+"} | json | statusCode >= 500`
-
-Interprétation:
-- **métriques** pour suivre un taux/volume d’erreurs (série temporelle robuste, peu de cardinalité)
-- **logs** pour diagnostiquer “pourquoi” (message, payload, contexte), mais plus coûteux/volumineux
-
-### 3.4 Traces distribuées (Tempo)
-
-Scénario:
-- déclencher une requête via le frontend: `POST /api/tasks`
-- Grafana → Explore → Tempo: retrouver la trace
-
-Requêtes TraceQL :
-- **Spans d’un service**:
-  - `{ resource.service.name = "api-gateway" }`
-- **Erreurs**:
-  - `{ status = error }`
-
-À vérifier dans la trace:
-- chaîne de spans: `api-gateway` → `task-service` → `postgres`
-- attributs: `http.method`, `http.route`, `http.status_code`, `db.statement` (selon auto-instrumentation)
-
-Capture attendue: *waterfall d’une trace multi-services*.
-
-### 3.5 Corrélation logs ↔ traces
-
-Les logs HTTP incluent un champ `trace_id`.
-
-Procédure de preuve:
-- Dans Tempo, ouvrir une trace et noter son `traceId`
-- Dans Loki, rechercher ce `trace_id`:
-  - `{service=~".+"} | json | trace_id="<TRACE_ID>"`
-
-Capture attendue: *même traceId trouvé côté Tempo et côté Loki*.
-
-## 4) Démarche d’investigation
-
-1. **Métriques**: identifier quel service/route explose (erreurs 5xx, latence p95/p99).
-2. **Logs**: filtrer `level="error"` + `statusCode >= 500` sur ce service pour obtenir le message et le contexte.
-3. **Traces**: isoler des spans en erreur ou lents pour localiser l’appel précis (gateway → service → DB).
-4. **Hypothèse / action**: confirmer (ex: timeouts DB, upstream 502, payload invalide) et proposer un correctif.
-
-## 5) Justification de choix
-
-- **OTel Collector**: on l’a placé entre les services et Tempo pour centraliser l’export OTLP, appliquer du batching et garder une config d’observabilité découplée du code applicatif.
-- **OTLP gRPC vers Tempo**: ce choix est plus adapté aux échanges inter-conteneurs, avec moins d’overhead que HTTP, tout en restant standard OpenTelemetry.
-- **Prometheus sur `/metrics`**: le modèle pull est simple à diagnostiquer, car Prometheus expose immédiatement dans les Targets si un service est bien scrapé ou non.
-- **Logs JSON avec Pino**: ce format rend les logs faciles à parser dans Promtail et permet des requêtes LogQL fiables sur `level`, `statusCode` ou `trace_id`.
-- **Ajout de `trace_id` dans les logs**: cela permet de corréler rapidement une erreur Loki avec la trace distribuée correspondante dans Tempo.
-- **Dashboards versionnés et provisionnés**: ce choix garantit une stack reproductible, ce qui est important pour la grille car l’enseignant retrouve directement les mêmes dashboards au démarrage.
+Critères d’évaluation du TP avec les points attendus pour chaque partie.
 
