@@ -131,10 +131,15 @@ docker compose up --scale task-service=3 -d
 
 ## Preuves et captures d'écran
 
-### Captures d'écran de l'observabilité
+### Partie 1 - Observabilité
 - **[Services Grafana](preuves/partie-b/02-graphana_services.png)** - Dashboard d'overview des services
 - **[Tâches Grafana](preuves/partie-b/03_graphana_tasks.png)** - Dashboard des métriques métier
 - **[Prometheus](preuves/partie-b/up_prometheus.png)** - Interface Prometheus avec targets
+
+### Partie 2 - Tests de charge k6
+- **[Résumé k6 test réaliste](preuves/partie-2/k6-test-realistic-summary.png)** - Résultats du test avec 50 VUs
+- **[Grafana Services Overview](preuves/partie-2/grafana-services-overview.png)** - Panel Request Rate pendant le pic de charge
+- **[Prometheus Targets](preuves/partie-2/prometheus-targets.png)** - Limitation du service discovery avec Docker Compose
 
 ## Guide d'observation
 

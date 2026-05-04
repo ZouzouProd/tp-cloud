@@ -113,6 +113,8 @@ docker run --rm -i --network=taskflow_default \
 
 ### Résultats du test réaliste
 
+![Résumé k6 test réaliste](preuves/partie-2/k6-test-realistic-summary.png)
+
 ```
 ✓ checks_succeeded: 99.96% (12350 out of 12354)
 ✓ checks_failed: 0.03% (4 out of 12354)
@@ -164,6 +166,8 @@ La **p95 finale est de 103.21ms**, ce qui reste largement en dessous du seuil de
 Pour observer une dégradation massive, il faudrait augmenter la charge (100+ VUs) ou la durée du test.
 
 #### Question 4 — Dans Grafana, observez le panel **Request Rate per Service** au pic de charge. L'`api-gateway` reçoit environ 2× plus de trafic que le `task-service` et 4× plus que le `user-service`. Expliquez pourquoi en vous appuyant sur le script de test : combien de requêtes par service sont émises à chaque itération ?
+
+![Grafana - Services Overview](preuves/partie-2/grafana-services-overview.png)
 
 **Réponse:**
 
@@ -307,6 +311,8 @@ Les 3 replicas sont actifs et exposent le port 3002 **uniquement sur le réseau 
 **Réponse:**
 
 **Vérification dans Prometheus:**
+
+![Prometheus Targets](preuves/partie-2/prometheus-targets.png)
 
 Requête API:
 ```bash
