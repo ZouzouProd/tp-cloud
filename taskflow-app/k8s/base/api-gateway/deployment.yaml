@@ -1,39 +1,39 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: user-service
+  name: api-gateway
   namespace: staging
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: user-service
+      app: api-gateway
   template:
     metadata:
       labels:
-        app: user-service
+        app: api-gateway
     spec:
       containers:
-        - name: user-service
-          image: taskflow-user-service:v1.0.0
+        - name: api-gateway
+          image: taskflow-api-gateway:v1.0.0
           imagePullPolicy: IfNotPresent
           ports:
-            - containerPort: 3001
+            - containerPort: 3000
           envFrom:
             - configMapRef:
-                name: user-service-cm
+                name: api-gateway-cm
             - secretRef:
                 name: postgres-secret
           readinessProbe:
             httpGet:
               path: /health
-              port: 3001
+              port: 3000
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
-              port: 3001
+              port: 3000
             initialDelaySeconds: 15
             periodSeconds: 10
           resources:
