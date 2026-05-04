@@ -8,7 +8,5 @@ data:
   DB_PORT: "5432"
   DB_NAME: "taskflow"
   DB_USER: "taskflow"
-  DATABASE_URL: "postgresql://taskflow:taskflow123@postgres:5432/taskflow"
   USER_SERVICE_PORT: "3001"
   LOG_LEVEL: "info"
-  JWT_SECRET: "your-super-secret-jwt-key-change-this-in-production"

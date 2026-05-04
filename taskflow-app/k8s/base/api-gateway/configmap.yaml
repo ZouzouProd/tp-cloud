@@ -8,5 +8,4 @@ data:
   USER_SERVICE_URL: "http://user-service:3001"
   TASK_SERVICE_URL: "http://task-service:3002"
   NOTIFICATION_SERVICE_URL: "http://notification-service:3003"
-  JWT_SECRET: "your-super-secret-jwt-key-change-this-in-production"
   LOG_LEVEL: "info"

@@ -8,7 +8,6 @@ data:
   DB_PORT: "5432"
   DB_NAME: "taskflow"
   DB_USER: "taskflow"
-  DATABASE_URL: "postgresql://taskflow:taskflow123@postgres:5432/taskflow"
   REDIS_HOST: "redis"
   REDIS_PORT: "6379"
   TASK_SERVICE_PORT: "3002"

@@ -15,6 +15,59 @@ Observer le comportement de la stack TaskFlow dans Kubernetes en mode live, en v
 
 ---
 
+## Partie 1 - Déploiement de la stack
+
+### Étape 3 — Diagnostic ImagePullBackOff
+
+#### 1. Que vous dit Kubernetes ?
+
+Lors du premier déploiement, les pods restaient en état `ImagePullBackOff` ou `ErrImagePull`. La commande `kubectl describe pod` montrait dans la section Events:
+
+```
+Failed to pull image "taskflow-user-service:latest": rpc error: code = Unknown desc = failed to pull and unpack image "docker.io/library/taskflow-user-service:latest": failed to resolve reference "docker.io/library/taskflow-user-service:latest": pull access denied, repository does not exist or may require authorization
+```
+
+Kubernetes tentait de télécharger l'image depuis Docker Hub, mais l'image n'existe pas sur le registry public.
+
+#### 2. Qu'est-ce qui manque dans votre configuration actuelle par rapport à ce que vous avez déployé jusqu'ici ?
+
+**Problème :** Les images Docker sont construites localement mais ne sont pas disponibles dans le cluster kind.
+
+**Solution :**
+1. Charger les images locales dans kind:
+```bash
+kind load docker-image taskflow-user-service:latest --name taskflow
+kind load docker-image taskflow-task-service:latest --name taskflow
+kind load docker-image taskflow-notification-service:latest --name taskflow
+kind load docker-image taskflow-api-gateway:latest --name taskflow
+kind load docker-image taskflow-frontend:latest --name taskflow
+```
+
+2. Ajouter `imagePullPolicy: Never` dans tous les Deployments pour forcer Kubernetes à utiliser les images locales au lieu de tenter de les télécharger.
+
+---
+
+### Étape 4 — Observation PostgreSQL
+
+#### Combien de pods sont en Running ?
+
+**1 pod** : `postgres-0`
+
+Le StatefulSet PostgreSQL est configuré avec `replicas: 1`. Contrairement aux Deployments qui créent des pods avec des noms aléatoires, le StatefulSet crée un pod avec un nom stable et prévisible basé sur un index ordinal (postgres-0, postgres-1, etc.).
+
+#### Sur quels nœuds sont-ils schedulés ?
+
+Le pod PostgreSQL peut être schedulé sur n'importe quel nœud du cluster (control-plane ou workers) selon la disponibilité des ressources. Dans notre cas, il a été placé sur un des workers.
+
+Pour vérifier:
+```bash
+kubectl get pods -n staging -o wide
+```
+
+La colonne `NODE` indique sur quel nœud chaque pod tourne. Le scheduler Kubernetes choisit automatiquement le nœud optimal en fonction des ressources disponibles (CPU, mémoire) et des contraintes éventuelles (nodeSelector, affinity).
+
+---
+
 ## Scénarios d'observation (Partie 3)
 
 Ces scénarios se font en gardant un terminal ouvert avec `watch kubectl get pods -n staging -o wide`.
@@ -27,14 +80,16 @@ Ces scénarios se font en gardant un terminal ouvert avec `watch kubectl get pod
 kubectl delete pod -n staging -l app=task-service
 ```
 
-### Observation
+**Observation :**
+
+Observez le Terminal A.
 
 - Le pod `task-service` supprimé est immédiatement recréé par le Deployment.
 - Le contrôleur Kubernetes crée un nouveau ReplicaSet/Pod pour restaurer le nombre de replicas souhaité.
 - Dans le terminal, on voit le pod disparaître puis un nouveau pod apparaître avec un suffixe différent.
 - Le nouvel pod passe ensuite par les phases `Pending` puis `Running`.
 
-### Analyse
+**Décrivez ce que vous voyez et pourquoi Kubernetes recrée les Pods :**
 
 Kubernetes garantit la haute disponibilité des applications déclaratives. Comme le `task-service` est géré par un `Deployment`, le ReplicaSet sous-jacent maintient le nombre de replicas désiré. Quand un pod est supprimé, Kubernetes considère qu'il manque une instance et lance immédiatement la création d'un nouveau pod.
 
@@ -233,7 +288,7 @@ limits:
 
 **Problème initial :** La création de compte échouait avec une erreur indiquant que les tables n'existaient pas dans la base de données.
 
-#### 2. Comment accéder à PostgreSQL depuis votre machine ?
+#### 2. Si vous obtenez une erreur, remontez la chaîne de logs (Ingress → api-gateway → user-service ...) jusqu'au service concerné. Une fois la cause identifiée, vous aurez besoin d'inspecter directement le contenu de la base. Comment accéder à PostgreSQL depuis votre machine ?
 
 **Commande utilisée :**
 ```bash
@@ -248,7 +303,7 @@ kubectl port-forward -n staging postgres-0 5432:5432
 psql -h localhost -U taskflow -d taskflow
 ```
 
-#### 3. Qu'est-ce qui est fait dans Compose et qui n'existe pas encore dans vos manifests ?
+#### 3. Comparez votre configuration Kubernetes avec docker-compose.yaml. Qu'est-ce qui est fait dans Compose et qui n'existe pas encore dans vos manifests ?
 
 **Dans docker-compose.yml :**
 ```yaml
@@ -282,7 +337,7 @@ volumes:
 
 ### Service vs Ingress
 
-#### 1. Pourquoi n'avez-vous pas pu vous connecter directement sur `localhost:5432` sans kubectl ?
+#### 1. Vous avez utilisé une commande pour vous connecter à PostgreSQL depuis votre machine. Pourquoi n'avez-vous pas pu vous connecter directement sur `localhost:5432` sans celle-ci ?
 
 Le Service PostgreSQL est de type **ClusterIP**, ce qui signifie qu'il n'est accessible que depuis l'intérieur du cluster Kubernetes. Il n'a pas d'IP externe ni de port exposé sur la machine hôte. Pour y accéder depuis l'extérieur, il faut soit :
 - Utiliser `kubectl exec` pour exécuter des commandes dans le pod
@@ -371,13 +426,13 @@ Ces scénarios se font en gardant un terminal ouvert avec `watch kubectl get pod
 
 ### Scénario 1 — Self-healing
 
-#### Commande exécutée
+**Commande exécutée :**
 
 ```bash
 kubectl delete pod -n staging -l app=task-service
 ```
 
-#### Observation
+**Observation :**
 
 - Le pod `task-service` supprimé est immédiatement recréé par le Deployment.
 - Le contrôleur Kubernetes crée un nouveau ReplicaSet/Pod pour restaurer le nombre de replicas souhaité.
@@ -394,7 +449,7 @@ Kubernetes garantit la haute disponibilité des applications déclaratives. Comm
 
 ### Scénario 2 — Readiness probe
 
-#### Préparation
+**Préparation :**
 
 Dans `k8s/base/task-service/deployment.yaml`, la readiness probe a été délibérément cassée en pointant vers :
 
@@ -405,7 +460,7 @@ readinessProbe:
     port: 3002
 ```
 
-#### Commandes exécutées
+**Commandes exécutées :**
 
 ```bash
 kind delete cluster --name taskflow
@@ -414,19 +469,19 @@ kubectl create namespace staging
 kubectl apply -f k8s/base/ --recursive
 ```
 
-#### Observation
+**Observation :**
 
-- Les pods du `task-service` restent en `0/1` dans la colonne READY.
-- Le pod démarre, mais la readiness probe échoue car l'endpoint `/does-not-exist` retourne `404`.
-- Le Service Kubernetes ne marque pas le pod comme prêt.
-- Les requêtes vers l'application échouent pour la création de tâches, car l'api-gateway ne peut pas router vers un endpoint prêt.
+Observez la colonne READY du Terminal A.
 
-#### Résultats des tests
+#### 1. Dans quel état sont les pods du `task-service` ?
 
-- Les services qui ne dépendent pas du `task-service` peuvent démarrer, mais toute requête vers `/api/tasks` retourne une erreur côté gateway ou un `503`.
-- Après avoir corrigé le chemin à `/health` et réappliqué la configuration, le pod du `task-service` repasse à `1/1` et les tâches peuvent à nouveau être créées.
+Les pods du `task-service` restent en `0/1` dans la colonne READY. Le pod démarre, mais la readiness probe échoue car l'endpoint `/does-not-exist` retourne `404`. Le Service Kubernetes ne marque pas le pod comme prêt.
 
-#### Différence entre readiness probe et liveness probe
+#### 2. Essayez de vous connecter, puis de créer une tâche. Quels services répondent, lesquels ne répondent pas ?
+
+Les services qui ne dépendent pas du `task-service` peuvent démarrer, mais toute requête vers `/api/tasks` retourne une erreur côté gateway ou un `503`. Après avoir corrigé le chemin à `/health` et réappliqué la configuration, le pod du `task-service` repasse à `1/1` et les tâches peuvent à nouveau être créées.
+
+#### 3. Réessayez de créer une tâche. Documentez puis expliquez la différence entre une readiness probe et une liveness probe. Que se serait-il passé si vous aviez cassé la liveness probe à la place ?
 
 - La **readiness probe** indique si un pod est prêt à recevoir du trafic. Si elle échoue, Kubernetes retire le pod des endpoints du Service, mais ne le tue pas forcément.
 - La **liveness probe** vérifie si un pod est vivant. Si elle échoue, Kubernetes redémarre le conteneur.
@@ -437,7 +492,7 @@ kubectl apply -f k8s/base/ --recursive
 
 ### Scénario 3 — Rolling update
 
-#### Préparation
+**Préparation :**
 
 - Modification visuelle du frontend pour identifier la version `v1.0.1`.
 - Construction et publication de l'image Docker :
@@ -466,20 +521,29 @@ kubectl apply -f k8s/base/frontend/deployment.yaml
 - Une fois le nouveau pod en `1/1 Running`, l'ancien pod est supprimé.
 - L'interface accessible sur `http://localhost` passe à la nouvelle version visible.
 
-#### Historique du rollout
+**Historique du rollout :**
 
 ```bash
 kubectl rollout history -n staging deployment/frontend
 ```
 
-- La colonne `CHANGE-CAUSE` contient l'historique des mises à jour.
-- Si nécessaire, la description peut être ajoutée avec :
+**Que voyez-vous dans la colonne CHANGE-CAUSE ?**
+
+Initialement, la colonne `CHANGE-CAUSE` est vide ou affiche `<none>` pour chaque révision. Cela rend l'historique difficile à interpréter : on voit les numéros de révision mais pas ce qui a changé.
+
+**Est-ce utile ?**
+
+Non, sans annotations, l'historique n'est pas exploitable. En production, il est impossible de savoir quelle révision correspond à quelle version ou quel changement sans consulter les logs git ou les tickets.
+
+**Solution :** Annoter les révisions pour les rendre lisibles :
 
 ```bash
 kubectl annotate deployment/frontend -n staging kubernetes.io/change-cause="passage à v1.0.1 - nouvelle interface"
 ```
 
-#### Rollback
+Après annotation, la colonne `CHANGE-CAUSE` affiche une description claire de chaque déploiement, ce qui facilite le diagnostic et les rollbacks en équipe.
+
+**Rollback :**
 
 ```bash
 kubectl rollout undo deployment/frontend -n staging
@@ -488,7 +552,7 @@ kubectl rollout undo deployment/frontend -n staging
 - Le rollback restaure la version précédente du frontend.
 - Le navigateur affiche de nouveau l'ancienne interface après quelques secondes.
 
-#### Réponses aux questions du rolling update
+**Réponses aux questions :**
 
 **1. Pendant le rolling update, le nombre de pods disponibles a-t-il diminué ? Pourquoi ?**
 
