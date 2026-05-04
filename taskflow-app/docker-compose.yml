@@ -41,8 +41,9 @@ services:
 
   task-service:
     build: ./task-service
-    ports:
-      - "3002:3002"
+    # Port mapping removed to allow scaling
+    # ports:
+    #   - "3002:3002"
     env_file:
       .env
     depends_on:
