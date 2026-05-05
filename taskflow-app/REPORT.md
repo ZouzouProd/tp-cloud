@@ -57,6 +57,20 @@ Contient :
 - [Self-healing avant](preuves/partie-3/self-healing-before.png)
 - [Self-healing après](preuves/partie-3/self-healing-after.png)
 
+### Partie 4A — Chart Helm TaskFlow
+**[OBSERVABILITY_PARTIE_4A.md](OBSERVABILITY_PARTIE_4A.md)**
+
+Contient :
+- Création du chart Helm TaskFlow
+- Ajout de la dépendance Redis via le chart Bitnami
+- Vérification du nom du Service Redis généré (`redis-master`)
+- Réponses aux questions théoriques de la partie A, étapes 1 et 2
+- Justification du choix chart officiel Redis vs template maison PostgreSQL
+- Séparation des valeurs sensibles de production hors des fichiers commités
+
+**Captures d’écran :**
+- [Service Redis généré par Helm](preuves/partie-4/partie-a/verify-name-service-redis.png)
+
 ## Architecture d’observabilité
 
 **[OBSERVABILITY_STACK.md](OBSERVABILITY_STACK.md)**
@@ -87,4 +101,3 @@ docker compose -f docker-compose.infra.yml up -d
 **[grille-evaluation.md](grille-evaluation.md)**
 
 Critères d’évaluation du TP avec les points attendus pour chaque partie.
-

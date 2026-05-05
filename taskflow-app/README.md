@@ -186,9 +186,11 @@ docker compose up --scale task-service=3 -d
 - **[TP_PARTIE_1.md](TP_PARTIE_1.md)** - Guide complet du TP Partie 1 avec instructions détaillées
 - **[TP_PARTIE_2.md](TP_PARTIE_2.md)** - Guide du TP Partie 2 - Tests de charge avec k6
 - **[TP_PARTIE_3.md](TP_PARTIE_3.md)** - Guide du TP Partie 3 - Déploiement Kubernetes
+- **[TP_PARTIE_4A.md](TP_PARTIE_4A.md)** - Guide du TP Partie 4A - Helm
 - **[OBSERVABILITE_PARTIE_1.md](OBSERVABILITE_PARTIE_1.md)** - Implémentation et résolution de problèmes Partie 1
 - **[OBSERVABILITE_PARTIE_2.md](OBSERVABILITE_PARTIE_2.md)** - Documentation complète des tests de charge et analyse
 - **[OBSERVABILITE_PARTIE_3.md](OBSERVABILITE_PARTIE_3.md)** - Documentation du déploiement Kubernetes
+- **[OBSERVABILITY_PARTIE_4A.md](OBSERVABILITY_PARTIE_4A.md)** - Documentation du chart Helm TaskFlow
 - **[REPORT.md](REPORT.md)** - Rapport d'analyse et preuves d'observabilité
 - **[OBSERVABILITY_STACK.md](OBSERVABILITY_STACK.md)** - Architecture de la stack d'observabilité
 - **[grille-evaluation.md](grille-evaluation.md)** - Grille d'évaluation du TP
@@ -213,6 +215,9 @@ docker compose up --scale task-service=3 -d
 - **[Tables PostgreSQL](preuves/partie-3/postgres-tables.png)** - Base de données initialisée
 - **[Self-healing avant](preuves/partie-3/self-healing-before.png)** - État initial des pods
 - **[Self-healing après](preuves/partie-3/self-healing-after.png)** - Pods recréés automatiquement
+
+### Partie 4A - Helm
+- **[Service Redis généré par Helm](preuves/partie-4/partie-a/verify-name-service-redis.png)** - Vérification du nom `redis-master`
 
 ## Guide d'observation
 

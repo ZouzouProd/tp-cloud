@@ -1,5 +1,6 @@
 image:
   prefix: bruce1000/taskflow
+  tag: v1.0.0
   pullPolicy: IfNotPresent
 
 postgres:
@@ -14,6 +15,7 @@ otel:
 userService:
   replicaCount: 2
   tag: v1.0.1
+  port: 3001
   resources:
     requests:
       memory: "128Mi"
@@ -23,16 +25,57 @@ userService:
       cpu: "200m"
 
 frontend:
-# [...]
+  replicaCount: 2
+  tag: v1.0.0
+  port: 80
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "25m"
+    limits:
+      memory: "96Mi"
+      cpu: "100m"
 
 taskService:
-# [...]
+  replicaCount: 2
+  tag: v1.0.0
+  port: 3002
+  redisUrl: redis://redis-master:6379
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
 
 notificationService:
-# [...]
+  replicaCount: 1
+  tag: v1.0.0
+  port: 3003
+  redisUrl: redis://redis-master:6379
+  resources:
+    requests:
+      memory: "96Mi"
+      cpu: "75m"
+    limits:
+      memory: "192Mi"
+      cpu: "150m"
 
 apiGateway:
-# [...]
+  replicaCount: 2
+  tag: v1.0.0
+  port: 3000
+  userServiceUrl: http://user-service:3001
+  taskServiceUrl: http://task-service:3002
+  notificationServiceUrl: http://notification-service:3003
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
 
 redis:
   enabled: true
