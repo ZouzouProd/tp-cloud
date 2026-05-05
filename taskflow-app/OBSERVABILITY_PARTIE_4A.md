@@ -524,3 +524,108 @@ Un changement de `image.<service>.tag` déclenche en revanche un rolling update 
 Dans ce cas, `helm-diff` permet de vérifier avant application que seul le tag attendu change, et qu'aucune autre ressource critique n'est modifiée par erreur. C'est important en production, car un mauvais tag peut déclencher un rolling update complet et remplacer des pods fonctionnels par des pods qui ne démarrent pas.
 
 Conclusion : `helm-diff` reste utile pour un changement de `replicaCount`, mais il devient beaucoup plus critique pour un changement de `image.<service>.tag`, car ce dernier modifie réellement la version du code exécuté et déclenche un rolling update Kubernetes.
+
+---
+
+## Application, observation et rollback
+
+### Application du changement
+
+Après la prévisualisation avec `helm-diff`, le changement a été appliqué avec :
+
+```bash
+helm upgrade taskflow ./helm/taskflow \
+  --namespace staging \
+  --values ./helm/taskflow/values.yaml
+```
+
+Pendant l'opération, un terminal de supervision était ouvert avec :
+
+```bash
+watch kubectl get pods -n staging -o wide
+```
+
+### Observation du rolling update
+
+![Rolling update avant rollback](preuves/partie-4/partie-a/rolling-update-before-rollback.png)
+
+La capture sert de preuve d'observation du namespace `staging` pendant le suivi avec `watch`.
+
+### Rollback Helm
+
+Le rollback vers la première révision a été testé avec :
+
+```bash
+helm rollback taskflow 1 -n staging
+```
+
+Après rollback, la supervision des pods montre :
+
+![Rolling update après rollback](preuves/partie-4/partie-a/rolling-update-after-rollback.png)
+
+La capture sert de preuve d'observation du namespace `staging` après le rollback vers la révision 1.
+
+### Historique Helm
+
+L'historique a été consulté avec :
+
+```bash
+helm history taskflow -n staging
+```
+
+![Historique Helm après rollback](preuves/partie-4/partie-a/help-history.png)
+
+La capture sert de preuve de l'historique Helm après le rollback.
+
+---
+
+## Réponses aux questions — Historique des déploiements
+
+### Question 1 — Décrivez ce que vous avez vu avec `watch kubectl get pods -n staging -o wide`.
+
+Avec `watch kubectl get pods -n staging -o wide`, on observe l'évolution des pods en direct pendant l'upgrade et le rollback.
+
+Pendant l'upgrade, les pods applicatifs restent visibles dans le namespace `staging`. Les pods déjà prêts restent en `Running` pendant que Kubernetes applique le nouvel état demandé par Helm. Dans la capture avant rollback, on voit notamment :
+
+- `notification-service` en `1/1 Running` ;
+- `postgres-0` en `1/1 Running` ;
+- `redis-master-0` en `1/1 Running` ;
+- deux pods `user-service` en `1/1 Running`.
+
+Après le rollback, Kubernetes tente de restaurer l'état de la révision 1. On voit alors apparaître un pod `user-service` en `InvalidImageName`, ce qui montre que Helm a bien restauré l'ancienne configuration, y compris son problème d'image sans tag complet.
+
+Cette observation illustre le fonctionnement d'un rolling update : Kubernetes fait évoluer progressivement les pods gérés par les Deployments, tout en essayant de maintenir l'application disponible lorsque les probes et les images sont correctes.
+
+### Question 2 — Quelle information présente dans `helm history` est absente de `kubectl rollout history` et pourquoi est-elle critique en production ?
+
+`helm history` donne l'historique global d'une release Helm. Il affiche notamment :
+
+- le numéro de révision Helm ;
+- la date de mise à jour ;
+- le statut de chaque révision (`deployed`, `superseded`, etc.) ;
+- le chart utilisé ;
+- l'app version ;
+- la description de l'action (`Install complete`, `Upgrade complete`, `Rollback to 1`).
+
+Dans notre capture, `helm history taskflow -n staging` montre par exemple que la révision 4 est actuellement `deployed` avec la description `Rollback to 1`.
+
+`kubectl rollout history`, lui, est limité à l'historique d'un seul objet Kubernetes, généralement un `Deployment`. Il ne donne pas une vision globale de toute l'application packagée par Helm.
+
+Cette différence est critique en production car une application ne se limite pas à un seul Deployment. Une release Helm peut contenir plusieurs Deployments, Services, ConfigMaps, Secrets, StatefulSets et dépendances. En cas d'incident, `helm history` permet de savoir quelle version complète de l'application a été installée, mise à jour ou restaurée.
+
+### Question 3 — `helm rollback taskflow 1` et `kubectl rollout undo deployment/task-service` semblent faire la même chose. Quelle est la différence fondamentale quand votre application déploie plusieurs ressources en même temps ?
+
+`kubectl rollout undo deployment/task-service` annule uniquement le rollout d'un seul Deployment : ici, `task-service`. Il ne restaure pas les autres ressources associées à l'application.
+
+`helm rollback taskflow 1`, en revanche, restaure toute la release Helm à la révision 1. Cela peut inclure :
+
+- plusieurs Deployments ;
+- des Services ;
+- des ConfigMaps ;
+- des Secrets ;
+- des StatefulSets ;
+- des dépendances comme Redis.
+
+La différence fondamentale est donc le périmètre du rollback. `kubectl rollout undo` agit sur une ressource Kubernetes isolée, alors que `helm rollback` agit sur l'application complète telle qu'elle a été déployée par le chart.
+
+C'est important lorsque plusieurs ressources doivent rester cohérentes entre elles. Par exemple, si une nouvelle image applicative dépend d'une nouvelle variable dans un ConfigMap, revenir uniquement au Deployment sans restaurer le ConfigMap peut laisser l'application dans un état incohérent. Helm évite ce problème en restaurant l'ensemble de la release.
