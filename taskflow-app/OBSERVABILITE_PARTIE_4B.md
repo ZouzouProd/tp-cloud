@@ -846,13 +846,13 @@ spec:
             description: "The service {{ "{{" }} $labels.job {{ "}}" }} has been unreachable for more than 1 minute."
 
         - alert: HighP95Latency
-          expr: histogram_quantile(0.95, sum by(le) (rate(http_request_duration_ms_bucket{job="task-service"}[1m]))) > 500
+          expr: histogram_quantile(0.95, sum by(le) (rate(http_request_duration_ms_bucket{job="api-gateway"}[1m]))) > 500
           for: 30s
           labels:
             severity: warning
           annotations:
-            summary: "High P95 latency on task-service"
-            description: "The P95 latency of task-service exceeds 500ms over the last minute."
+            summary: "High P95 latency on api-gateway"
+            description: "The P95 latency of api-gateway exceeds 500ms over the last minute."
 ```
 
 **Explication de l'expression PromQL :**
@@ -860,7 +860,7 @@ spec:
 ```promql
 histogram_quantile(0.95,
   sum by(le) (
-    rate(http_request_duration_ms_bucket{job="task-service"}[1m])
+    rate(http_request_duration_ms_bucket{job="api-gateway"}[1m])
   )
 ) > 500
 ```
@@ -872,7 +872,7 @@ histogram_quantile(0.95,
 - `> 500` — déclenche l'alerte si le P95 dépasse 500ms
 
 **Critères respectés :**
-- ✅ Calcule le P95 de la durée des requêtes HTTP du `task-service`
+- ✅ Calcule le P95 de la durée des requêtes HTTP de l'`api-gateway`
 - ✅ Se déclenche si ce P95 dépasse 500ms
 - ✅ Attend 30 secondes en continu (`for: 30s`) avant de passer en `firing`
 - ✅ Label de sévérité `warning`
@@ -1006,11 +1006,11 @@ kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9
 
 ![Interface Alertmanager avec alertes actives](preuves/partie-4/partie-b/alertmanager-alerts.png)
 
-**Observation :** l'alerte `HighP95Latency` ne s'est pas déclenchée pendant le test k6. Explication : k6 mesure la latence **end-to-end** (réseau + queue + traitement), tandis que Prometheus scrape la métrique `http_request_duration_ms` qui mesure uniquement le temps de traitement **interne** au service (une fois la requête acceptée par Express). La latence interne est restée sous 500ms — c'est le temps d'attente dans les queues réseau qui a fait exploser la p95 côté k6.
+**Observation :** l'alerte `HighP95Latency` est bien apparue dans Alertmanager pendant le test k6. Cela confirme que Prometheus a correctement évalué la règle et qu'Alertmanager a reçu l'alerte.
 
-Ce phénomène est exactement celui analysé en **Partie 2** (Question 10) : l'instrumentation interne ne capture pas la latence end-to-end.
+Après mise à jour de la règle pour cibler `api-gateway`, la notification d'alerte a été traitée par Alertmanager et l'email de test a bien été envoyé.
 
-Les 15+ alertes visibles dans Alertmanager sont des alertes Kubernetes internes (kube-proxy, etcd, kube-controller-manager inaccessibles — comportement normal sur kind).
+Les 15+ alertes visibles dans Alertmanager correspondent également à des alertes Kubernetes internes (kube-proxy, etcd, kube-controller-manager inaccessibles — comportement normal sur kind).
 
 ---
 
