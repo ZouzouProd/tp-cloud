@@ -68,6 +68,9 @@ Contient :
 - Réponses aux questions théoriques sur le port-forward et l'accès à Grafana
 - Séparation des valeurs sensibles et surcharge des valeurs d'un chart tiers
 - Vérification du mécanisme ConfigMap inline pour les dashboards Grafana
+- Création du chart local avec `kube-prometheus-stack` en dépendance
+- Intégration des dashboards via `.Files.Glob` et réponses aux questions théoriques
+- Connexion de TaskFlow à Prometheus via ServiceMonitors générés avec `range`
 
 **Captures d'écran :**
 - [Inspection du Chart.yaml kube-prometheus-stack](preuves/partie-4/partie-b/inspect-chart.png)
@@ -76,7 +79,12 @@ Contient :
 - [Port-forward Grafana fonctionnel](preuves/partie-4/partie-b/port-monitoring-grafana.png)
 - [Réinstallation avec fichiers de valeurs](preuves/partie-4/partie-b/install-monitoring-with-secret.png)
 - [kubectl apply dashboard-configmap](preuves/partie-4/partie-b/apply-dashboard-configmap.png)
-- [Dashboard TaskFlow visible dans Grafana](preuves/partie-4/partie-b/grafana-dashboard-taskflow.png)
+- [Dashboard TaskFlow visible dans Grafana (ConfigMap inline)](preuves/partie-4/partie-b/grafana-dashboard-taskflow.png)
+- [helm upgrade avec dashboards JSON via .Files.Glob](preuves/partie-4/partie-b/helm-upgrade-dashboards.png)
+- [Dashboards TaskFlow chargés depuis Helm dans Grafana](preuves/partie-4/partie-b/grafana-dashboards-from-helm.png)
+- [helm upgrade taskflow avec labels et ports nommés](preuves/partie-4/partie-b/helm-upgrade-taskflow-servicemonitor.png)
+- [helm upgrade monitoring avec ServiceMonitors](preuves/partie-4/partie-b/helm-upgrade-monitoring-servicemonitor.png)
+- [Prometheus targets — services TaskFlow up](preuves/partie-4/partie-b/prometheus-targets-taskflow.png)
 
 ---
 

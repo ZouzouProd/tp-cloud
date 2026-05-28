@@ -1,0 +1,123 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqpm"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "expr": "rate(tasks_created_total[5m]) * 60",
+          "legendFormat": "{{priority}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tasks Created per Minute",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "expr": "sum by(priority) (tasks_created_total)",
+          "legendFormat": "{{priority}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Tasks by Priority",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3,
+      "targets": [
+        {
+          "expr": "sum by(from_status, to_status) (rate(tasks_status_changes_total[5m])) * 60",
+          "legendFormat": "{{from_status}} -> {{to_status}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Task Status Changes per Minute",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4,
+      "targets": [
+        {
+          "expr": "sum by(success) (rate(user_login_attempts_total[5m])) * 60",
+          "legendFormat": "success={{success}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Login Attempts per Minute",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": [
+    "taskflow",
+    "business"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "timezone": "",
+  "title": "TaskFlow - Business Metrics",
+  "version": 1
+}
