@@ -1,61 +1,63 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: user-service
+  name: task-service
   namespace: {{ .Release.Namespace }}
 spec:
-  replicas: {{ .Values.userService.replicaCount }}
+  replicas: {{ .Values.taskService.replicaCount }}
   selector:
     matchLabels:
-      app: user-service
+      app: task-service
   template:
     metadata:
       labels:
-        app: user-service
+        app: task-service
     spec:
       imagePullSecrets:
         - name: dockerhub-secret
       containers:
-        - name: user-service
-          image: "{{ .Values.image.prefix }}-user-service:{{ .Values.image.tag }}"
+        - name: task-service
+          image: "{{ .Values.image.prefix }}-task-service:{{ .Values.taskService.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           env:
             - name: PORT
-              value: "3001"
+              value: {{ .Values.taskService.port | quote }}
             - name: DATABASE_URL
               value: "postgresql://{{ .Values.postgres.user }}:{{ .Values.postgres.password }}@postgres:5432/{{ .Values.postgres.db }}"
+            - name: REDIS_URL
+              value: {{ .Values.taskService.redisUrl | quote }}
             - name: OTEL_SERVICE_NAME
-              value: user-service
+              value: task-service
             - name: OTEL_EXPORTER_OTLP_ENDPOINT
               value: {{ .Values.otel.endpoint | quote }}
           ports:
-            - containerPort: 3001
+            - containerPort: {{ .Values.taskService.port }}
           readinessProbe:
             httpGet:
               path: /health
-              port: 3001
+              port: {{ .Values.taskService.port }}
             initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
               path: /health
-              port: 3001
+              port: {{ .Values.taskService.port }}
             initialDelaySeconds: 15
             periodSeconds: 10
           resources:
-            {{- toYaml .Values.userService.resources | nindent 12 }}
+            {{- toYaml .Values.taskService.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: user-service
+  name: task-service
   namespace: {{ .Release.Namespace }}
   labels:
-    app: user-service
+    app: task-service
 spec:
   selector:
-    app: user-service
+    app: task-service
   ports:
     - name: http
-      port: 3001
-      targetPort: 3001
+      port: {{ .Values.taskService.port }}
+      targetPort: {{ .Values.taskService.port }}

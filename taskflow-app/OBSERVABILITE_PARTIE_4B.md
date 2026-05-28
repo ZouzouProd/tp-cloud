@@ -489,3 +489,329 @@ Le dashboard **"TaskFlow — Services"** apparaît automatiquement dans Grafana 
 ![Dashboard TaskFlow visible dans Grafana](preuves/partie-4/partie-b/grafana-dashboard-taskflow.png)
 
 > ⚠️ **Limite de cette approche :** ce ConfigMap est créé **hors du contrôle de Helm** — il n'est pas tracé dans la release `monitoring`. Si on fait un `helm uninstall monitoring`, ce ConfigMap reste en place. C'est pourquoi l'étape suivante consiste à l'intégrer directement dans un chart Helm local.
+
+---
+
+### Créer un chart Helm local avec `kube-prometheus-stack` en dépendance
+
+La méthode `kubectl apply` crée des ressources hors du contrôle de Helm — elles ne sont pas tracées dans la release et ne seront pas supprimées par `helm uninstall`. Pour gérer l'ensemble de la stack via Helm, nous avons créé un chart local `helm/monitoring/Chart.yaml` qui embarque `kube-prometheus-stack` comme dépendance.
+
+#### Nettoyage de la release existante
+
+```bash
+helm uninstall monitoring -n monitoring
+kubectl delete namespace monitoring
+```
+
+```
+release "monitoring" uninstalled
+namespace "monitoring" deleted
+```
+
+#### Création du `Chart.yaml`
+
+```yaml
+# helm/monitoring/Chart.yaml
+apiVersion: v2
+name: monitoring
+description: Stack d'observabilité TaskFlow (Prometheus, Grafana, Alertmanager)
+type: application
+version: 0.1.0
+
+dependencies:
+  - name: kube-prometheus-stack
+    version: ">=0.0.0-0"
+    repository: https://prometheus-community.github.io/helm-charts
+```
+
+#### Téléchargement de la dépendance et installation
+
+```bash
+helm dependency update ./helm/monitoring
+```
+
+```
+Saving 1 charts
+Downloading kube-prometheus-stack from repo https://prometheus-community.github.io/helm-charts
+Deleting outdated charts
+```
+
+```bash
+helm upgrade --install monitoring ./helm/monitoring \
+  --namespace monitoring \
+  --create-namespace \
+  -f helm/monitoring/values.monitoring.yaml \
+  -f helm/monitoring/values.monitoring.secret.yaml
+```
+
+#### Problèmes rencontrés
+
+**Problème 3 — `{{ job }}` interprété comme un template Helm**
+
+La première tentative a échoué avec :
+
+```
+Error: parse error at (monitoring/templates/dashboard-configmap.yaml:19): function "job" not defined
+```
+
+Le fichier `dashboard-configmap.yaml` contient du JSON avec `{{ job }}` comme `legendFormat` Grafana. Helm interprète les doubles accolades comme des directives de template. La correction consiste à échapper les accolades :
+
+```yaml
+# Avant
+"legendFormat": "{{ job }}"
+
+# Après
+"legendFormat": "{{ "{{" }} job {{ "}}" }}"
+```
+
+**Problème 4 — `PrometheusRule` avec `expr` vide**
+
+Après correction du premier problème, une deuxième erreur est apparue :
+
+```
+Error: 1 error occurred:
+* PrometheusRule.monitoring.coreos.com "taskflow-alerts" is invalid:
+  spec.groups[0].rules[0].expr: Required value
+```
+
+Le fichier `alerts.yaml` contenait une règle `ServiceDown` incomplète (champ `expr` manquant avec un commentaire `# [...]`). Kubernetes rejette une `PrometheusRule` avec une expression vide. Nous avons complété les deux règles d'alerte (`ServiceDown` et `HighP95Latency`) avant de relancer l'installation.
+
+**Problème 5 — `{{ $labels.job }}` interprété comme un template Helm**
+
+Une troisième erreur est apparue :
+
+```
+Error: UPGRADE FAILED: parse error at (monitoring/templates/alerts.yaml:18): undefined variable "$labels"
+```
+
+Les annotations PromQL dans `alerts.yaml` utilisent `{{ $labels.job }}` — une syntaxe Prometheus valide mais que Helm interprète comme du templating Go. Même correction que pour le `dashboard-configmap.yaml` : échapper toutes les accolades doubles dans les chaînes YAML avec `{{ "{{" }}` et `{{ "}}" }}`.
+
+#### Résultat final
+
+```
+Release "monitoring" has been upgraded. Happy Helming!
+NAME: monitoring
+LAST DEPLOYED: Thu May 28 14:11:57 2026
+NAMESPACE: monitoring
+STATUS: deployed
+REVISION: 2
+TEST SUITE: None
+```
+
+---
+
+### Intégrer les dashboards via un dossier
+
+#### Copie des dashboards JSON
+
+```bash
+mkdir helm/monitoring/dashboards
+cp infra/grafana/dashboards/*.json helm/monitoring/dashboards/
+```
+
+Deux dashboards copiés :
+- `services-overview.json`
+- `taskflow-business.json`
+
+#### Vérification de l'UID de la datasource
+
+```bash
+grep -r "uid" helm/monitoring/dashboards/
+```
+
+```
+helm/monitoring/dashboards/taskflow-business.json:  "uid": "prometheus"
+helm/monitoring/dashboards/services-overview.json:  "uid": "prometheus"
+```
+
+Les dashboards référencent l'UID `prometheus` — c'est exactement l'UID que `kube-prometheus-stack` utilise pour sa datasource Prometheus par défaut. Aucun remplacement nécessaire.
+
+#### Mise à jour du `dashboard-configmap.yaml` avec `.Files.Glob`
+
+Le template `dashboard-configmap.yaml` a été mis à jour pour charger automatiquement tous les fichiers `*.json` du dossier `dashboards/` via la fonction `.Files.Glob` de Helm :
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: taskflow-dashboards
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+{{- range $path, $bytes := .Files.Glob "dashboards/*.json" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+```
+
+#### Réflexion théorique — Limites du ConfigMap inline
+
+**Question 9 — Pourquoi serait-il problématique de coller le JSON directement dans le ConfigMap avec `|` ?**
+
+Coller les JSON directement dans le champ `data` du ConfigMap pose plusieurs problèmes :
+
+1. **Maintenabilité** : les fichiers JSON de dashboards Grafana font souvent plusieurs centaines de lignes. Les intégrer inline dans un YAML rend le fichier illisible et très difficile à modifier.
+2. **Lisibilité** : l'indentation YAML doit être respectée pour tout le JSON — la moindre erreur d'indentation casse le ConfigMap.
+3. **Scalabilité** : avec plusieurs dashboards (`services-overview.json`, `taskflow-business.json`...), il faudrait un ConfigMap par dashboard ou un seul fichier template gigantesque à modifier manuellement à chaque ajout.
+
+**Question 10 — Quelle fonction Helm charge automatiquement tous les `*.json` d'un dossier ?**
+
+La fonction `.Files.Glob` combinée à `range` permet de charger tous les fichiers d'un dossier en une seule déclaration :
+
+```yaml
+{{- range $path, $bytes := .Files.Glob "dashboards/*.json" }}
+  {{ base $path }}: |
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}
+```
+
+- `.Files.Glob "dashboards/*.json"` retourne tous les fichiers JSON du dossier
+- `range` itère sur chaque fichier
+- `base $path` extrait le nom du fichier (ex: `services-overview.json`)
+- `.Files.Get $path | indent 4` charge le contenu et l'indente correctement pour le YAML
+
+Ajouter un nouveau dashboard ne nécessite plus de modifier le template — il suffit de déposer un fichier JSON dans `helm/monitoring/dashboards/`.
+
+#### Réinstallation
+
+```bash
+helm upgrade --install monitoring ./helm/monitoring \
+  --namespace monitoring \
+  -f helm/monitoring/values.monitoring.yaml \
+  -f helm/monitoring/values.monitoring.secret.yaml
+```
+
+```
+Release "monitoring" has been upgraded. Happy Helming!
+NAME: monitoring
+LAST DEPLOYED: Thu May 28 14:16:40 2026
+NAMESPACE: monitoring
+STATUS: deployed
+REVISION: 3
+TEST SUITE: None
+```
+
+![helm upgrade avec dashboards JSON](preuves/partie-4/partie-b/helm-upgrade-dashboards.png)
+
+![Dashboards TaskFlow chargés depuis Helm dans Grafana](preuves/partie-4/partie-b/grafana-dashboards-from-helm.png)
+
+
+---
+
+## Étape 3 — Connecter TaskFlow à Prometheus
+
+### Prérequis : préparer les Services TaskFlow
+
+Pour qu'un `ServiceMonitor` puisse cibler un Service, deux conditions sont nécessaires :
+- Le Service doit avoir un **label** dans ses `metadata` (pour que le selector du ServiceMonitor le trouve)
+- Le port doit avoir un **nom** (pour que le ServiceMonitor puisse le référencer par nom plutôt que par numéro)
+
+Nous avons mis à jour tous les Services backend dans `helm/taskflow/templates/` en ajoutant `labels: app: <nom-service>` et `name: http` sur le port. Exemple pour `user-service` :
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: user-service
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: user-service   # ← label ajouté
+spec:
+  selector:
+    app: user-service
+  ports:
+    - name: http        # ← nom de port ajouté
+      port: 3001
+      targetPort: 3001
+```
+
+#### Déploiement taskflow mis à jour
+
+```bash
+helm upgrade --install taskflow ./helm/taskflow \
+  --namespace staging \
+  --create-namespace \
+  --reset-values
+```
+
+![helm upgrade taskflow avec ServiceMonitors](preuves/partie-4/partie-b/helm-upgrade-taskflow-servicemonitor.png)
+
+---
+
+### Créer les ServiceMonitors avec `range`
+
+Au lieu de créer 4 fichiers quasi-identiques, nous avons utilisé l'action `range` de Helm pour générer les 4 `ServiceMonitor` en un seul fichier `helm/monitoring/templates/service-monitors.yaml` :
+
+```yaml
+{{- range list "api-gateway" "task-service" "user-service" "notification-service" }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ . }}
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - staging
+  selector:
+    matchLabels:
+      app: {{ . }}
+  endpoints:
+    - port: http
+      path: /metrics
+{{- end }}
+```
+
+`range` itère sur la liste des 4 services et génère un `ServiceMonitor` identique pour chacun, en substituant le nom à chaque itération. Sans `range`, il aurait fallu 4 fichiers séparés avec 95% de contenu dupliqué.
+
+---
+
+### Autoriser Prometheus à découvrir les ServiceMonitors hors de son namespace
+
+Par défaut, Prometheus ne regarde que dans son propre namespace (`monitoring`). Nos services sont dans `staging`. Nous avons ajouté dans `values.monitoring.yaml` :
+
+```yaml
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      serviceMonitorNamespaceSelector: {}      # autorise tous les namespaces
+      serviceMonitorSelector:
+        matchLabels:
+          release: monitoring                  # filtre sur le label release
+```
+
+`serviceMonitorNamespaceSelector: {}` (objet vide) signifie "tous les namespaces" — sans cette clé, Prometheus ignore les ServiceMonitors hors de `monitoring`.
+
+#### Réinstallation du chart monitoring
+
+```bash
+helm upgrade --install monitoring ./helm/monitoring \
+  --namespace monitoring \
+  -f helm/monitoring/values.monitoring.yaml \
+  -f helm/monitoring/values.monitoring.secret.yaml
+```
+
+![helm upgrade monitoring avec ServiceMonitors](preuves/partie-4/partie-b/helm-upgrade-monitoring-servicemonitor.png)
+
+---
+
+### Vérification dans Prometheus
+
+```bash
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+```
+
+Sur **http://localhost:9090/targets**, les 4 services TaskFlow apparaissent bien avec l'état `up` :
+
+| ServiceMonitor | Targets | État |
+|---|---|---|
+| `serviceMonitor/monitoring/notification-service/0` | 1/1 | ✅ up |
+| `serviceMonitor/monitoring/task-service/0` | 2/2 | ✅ up |
+| `serviceMonitor/monitoring/user-service/0` | 2/2 | ✅ up |
+| `serviceMonitor/monitoring/api-gateway/0` | 2/2 | ✅ up |
+
+![Prometheus targets — services TaskFlow up](preuves/partie-4/partie-b/prometheus-targets-taskflow.png)
