@@ -57,6 +57,29 @@ Contient :
 - [Self-healing avant](preuves/partie-3/self-healing-before.png)
 - [Self-healing après](preuves/partie-3/self-healing-after.png)
 
+### Partie 4B — Stack d'observabilité via Helm
+**[OBSERVABILITE_PARTIE_4B.md](OBSERVABILITE_PARTIE_4B.md)**
+
+Contient :
+- Analyse des dépendances du chart `kube-prometheus-stack`
+- Réponse à la question théorique sur l'atomicité des installations Helm
+- Adaptation des commandes `helm install` et `helm upgrade --install` avec `--rollback-on-failure`
+- Installation de la stack et problèmes rencontrés (cluster inaccessible, port-forward)
+- Réponses aux questions théoriques sur le port-forward et l'accès à Grafana
+- Séparation des valeurs sensibles et surcharge des valeurs d'un chart tiers
+- Vérification du mécanisme ConfigMap inline pour les dashboards Grafana
+
+**Captures d'écran :**
+- [Inspection du Chart.yaml kube-prometheus-stack](preuves/partie-4/partie-b/inspect-chart.png)
+- [Installation monitoring — helm upgrade --install](preuves/partie-4/partie-b/install-monitoring.png)
+- [Pods monitoring en Running](preuves/partie-4/partie-b/get-pods-monitoring.png)
+- [Port-forward Grafana fonctionnel](preuves/partie-4/partie-b/port-monitoring-grafana.png)
+- [Réinstallation avec fichiers de valeurs](preuves/partie-4/partie-b/install-monitoring-with-secret.png)
+- [kubectl apply dashboard-configmap](preuves/partie-4/partie-b/apply-dashboard-configmap.png)
+- [Dashboard TaskFlow visible dans Grafana](preuves/partie-4/partie-b/grafana-dashboard-taskflow.png)
+
+---
+
 ### Partie 4A — Chart Helm TaskFlow
 **[OBSERVABILITY_PARTIE_4A.md](OBSERVABILITY_PARTIE_4A.md)**
 
