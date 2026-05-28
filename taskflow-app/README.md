@@ -191,6 +191,7 @@ docker compose up --scale task-service=3 -d
 - **[OBSERVABILITE_PARTIE_2.md](OBSERVABILITE_PARTIE_2.md)** - Documentation complète des tests de charge et analyse
 - **[OBSERVABILITE_PARTIE_3.md](OBSERVABILITE_PARTIE_3.md)** - Documentation du déploiement Kubernetes
 - **[OBSERVABILITY_PARTIE_4A.md](OBSERVABILITY_PARTIE_4A.md)** - Documentation du chart Helm TaskFlow
+- **[OBSERVABILITE_PARTIE_4B.md](OBSERVABILITE_PARTIE_4B.md)** - Documentation de la stack d'observabilité via Helm
 - **[REPORT.md](REPORT.md)** - Rapport d'analyse et preuves d'observabilité
 - **[OBSERVABILITY_STACK.md](OBSERVABILITY_STACK.md)** - Architecture de la stack d'observabilité
 - **[grille-evaluation.md](grille-evaluation.md)** - Grille d'évaluation du TP
@@ -218,6 +219,133 @@ docker compose up --scale task-service=3 -d
 
 ### Partie 4A - Helm
 - **[Service Redis généré par Helm](preuves/partie-4/partie-a/verify-name-service-redis.png)** - Vérification du nom `redis-master`
+
+## Option 3 : Lancer avec Helm (Partie 4)
+
+### Prérequis
+- Cluster kind démarré (voir Option 2, étape 1)
+- Ingress Controller NGINX installé (voir Option 2, étape 5)
+- Helm installé
+
+### Partie 4A — Chart Helm TaskFlow
+
+**Ajouter le repo Bitnami (pour Redis) :**
+```bash
+helm repo add bitnami https://charts.bitnami.com/bitnami
+helm repo update
+```
+
+**Télécharger les dépendances :**
+```bash
+helm dependency update ./helm/taskflow
+```
+
+**Déployer TaskFlow en staging :**
+```bash
+helm upgrade --install taskflow ./helm/taskflow \
+  --namespace staging \
+  --create-namespace \
+  --reset-values
+```
+
+**Appliquer l'Ingress :**
+```bash
+kubectl apply -f k8s/base/ingress.yaml
+```
+
+**Vérifier le déploiement :**
+```bash
+kubectl get pods -n staging
+kubectl get svc -n staging
+```
+
+**Accès :**
+- Frontend : `http://localhost:8080`
+- API : `http://localhost:8080/api/health`
+
+---
+
+### Partie 4B — Stack d'observabilité via Helm
+
+**Ajouter le repo prometheus-community :**
+```bash
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+```
+
+**Créer le fichier de secrets (à partir de l'exemple) :**
+```bash
+cp helm/monitoring/values.monitoring.secret.example.yaml helm/monitoring/values.monitoring.secret.yaml
+# Remplir les valeurs : adminPassword, credentials SMTP Brevo
+```
+
+**Télécharger les dépendances du chart monitoring :**
+```bash
+helm dependency update ./helm/monitoring
+```
+
+**Déployer la stack monitoring :**
+```bash
+helm upgrade --install monitoring ./helm/monitoring \
+  --namespace monitoring \
+  --create-namespace \
+  -f helm/monitoring/values.monitoring.yaml \
+  -f helm/monitoring/values.monitoring.secret.yaml
+```
+
+**Vérifier les pods monitoring :**
+```bash
+kubectl get pods -n monitoring
+```
+
+**Accès aux interfaces (port-forward nécessaire) :**
+```bash
+# Grafana
+kubectl port-forward -n monitoring svc/monitoring-grafana 3100:80
+
+# Prometheus
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+
+# Alertmanager
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093
+```
+
+- Grafana : `http://localhost:3100` (admin/admin)
+- Prometheus : `http://localhost:9090`
+- Alertmanager : `http://localhost:9093`
+
+**Vérifier les ServiceMonitors :**
+```bash
+kubectl get servicemonitors -n monitoring
+```
+
+**Vérifier les règles d'alerte :**
+```bash
+# Via Prometheus UI : http://localhost:9090/rules
+```
+
+**Test de charge pour déclencher les alertes :**
+```bash
+# Créer un utilisateur de test
+curl -X POST http://localhost:8080/api/users/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"k6test@example.com","password":"k6test123","name":"K6 Test"}'
+
+# Lancer k6
+k6 run \
+  -e BASE_URL=http://localhost:8080 \
+  -e EMAIL=k6test@example.com \
+  -e PASSWORD=k6test123 \
+  scripts/load-test-realistic.js
+```
+
+**Désinstaller :**
+```bash
+helm uninstall monitoring -n monitoring
+helm uninstall taskflow -n staging
+kubectl delete namespace monitoring
+kubectl delete namespace staging
+```
 
 ## Guide d'observation
 
