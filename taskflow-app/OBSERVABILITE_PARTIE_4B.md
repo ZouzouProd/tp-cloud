@@ -815,3 +815,227 @@ Sur **http://localhost:9090/targets**, les 4 services TaskFlow apparaissent bien
 | `serviceMonitor/monitoring/api-gateway/0` | 2/2 | ✅ up |
 
 ![Prometheus targets — services TaskFlow up](preuves/partie-4/partie-b/prometheus-targets-taskflow.png)
+
+---
+
+## Étape 4 — Configurer une alerte
+
+### Règle `HighP95Latency`
+
+Le fichier `helm/monitoring/templates/alerts.yaml` contient deux règles d'alerte complètes :
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: taskflow-alerts
+  namespace: monitoring
+  labels:
+    release: monitoring
+spec:
+  groups:
+    - name: taskflow
+      rules:
+        - alert: ServiceDown
+          expr: up{job=~"task-service|user-service|api-gateway|notification-service"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Service {{ "{{" }} $labels.job {{ "}}" }} is down"
+            description: "The service {{ "{{" }} $labels.job {{ "}}" }} has been unreachable for more than 1 minute."
+
+        - alert: HighP95Latency
+          expr: histogram_quantile(0.95, sum by(le) (rate(http_request_duration_ms_bucket{job="api-gateway"}[1m]))) > 500
+          for: 30s
+          labels:
+            severity: warning
+          annotations:
+            summary: "High P95 latency on api-gateway"
+            description: "The P95 latency of api-gateway exceeds 500ms over the last minute."
+```
+
+**Explication de l'expression PromQL :**
+
+```promql
+histogram_quantile(0.95,
+  sum by(le) (
+    rate(http_request_duration_ms_bucket{job="api-gateway"}[1m])
+  )
+) > 500
+```
+
+- `http_request_duration_ms_bucket` — suffixe `_bucket` exposé par prom-client pour les histogrammes
+- `rate(...[1m])` — calcule le taux d'incrémentation des buckets sur 1 minute
+- `sum by(le)` — agrège tous les labels (`route`, `method`, `status`...) en ne gardant que `le` (le label de bucket). Sans cette agrégation, `histogram_quantile()` calculerait un quantile par combinaison de labels, ce qui donnerait des résultats incorrects
+- `histogram_quantile(0.95, ...)` — calcule le 95e percentile à partir des buckets agrégés
+- `> 500` — déclenche l'alerte si le P95 dépasse 500ms
+
+**Critères respectés :**
+- ✅ Calcule le P95 de la durée des requêtes HTTP de l'`api-gateway`
+- ✅ Se déclenche si ce P95 dépasse 500ms
+- ✅ Attend 30 secondes en continu (`for: 30s`) avant de passer en `firing`
+- ✅ Label de sévérité `warning`
+- ✅ Message lisible dans les annotations
+
+### Vérification dans Prometheus
+
+```bash
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-prometheus 9090:9090
+```
+
+Sur **http://localhost:9090/rules**, les deux règles apparaissent en état `OK` :
+
+![Règles d'alerte chargées dans Prometheus](preuves/partie-4/partie-b/prometheus-rules.png)
+
+---
+
+## Étape 5 — Notifier via Alertmanager
+
+### Configuration du Secret Alertmanager
+
+Le fichier `helm/monitoring/templates/alertmanager-config.yaml` crée un Secret Kubernetes contenant la configuration SMTP d'Alertmanager. Les credentials sont injectés depuis `values.monitoring.secret.yaml` :
+
+```yaml
+# values.monitoring.secret.yaml
+grafana:
+  adminPassword: "admin"
+alertmanagerConfig:
+  smtp:
+    host: "smtp-relay.brevo.com:587"
+    from: "ac30f9001@smtp-brevo.com"
+    username: "ac30f9001@smtp-brevo.com"
+    password: "<clé-smtp-brevo>"
+    to: "corentin.gesse@gmail.com"
+```
+
+Le `values.monitoring.yaml` référence ce Secret via `configSecret` :
+
+```yaml
+kube-prometheus-stack:
+  alertmanager:
+    alertmanagerSpec:
+      configSecret: taskflow-alertmanager-config
+```
+
+### Réinstallation avec la config Alertmanager
+
+```bash
+helm upgrade --install monitoring ./helm/monitoring \
+  --namespace monitoring \
+  -f helm/monitoring/values.monitoring.yaml \
+  -f helm/monitoring/values.monitoring.secret.yaml
+```
+
+![helm upgrade avec config Alertmanager](preuves/partie-4/partie-b/helm-upgrade-alertmanager.png)
+
+---
+
+### Test de charge avec k6
+
+**Problèmes rencontrés avant de lancer k6 :**
+
+1. **k6 non installé** — `Command 'k6' not found`. Installation via snap :
+   ```bash
+   sudo snap install k6
+   ```
+
+2. **Ingress Controller NGINX absent** — `curl http://localhost:8080/health` retournait `connection reset`. L'Ingress Controller n'était pas installé sur le cluster kind :
+   ```bash
+   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/kind/deploy.yaml
+   kubectl wait --namespace ingress-nginx \
+     --for=condition=ready pod \
+     --selector=app.kubernetes.io/component=controller \
+     --timeout=90s
+   ```
+
+3. **Service `frontend` manquant** — L'Ingress routait `/` vers `frontend:80` mais ce Service n'existait pas en staging. Nous avons créé le template `helm/taskflow/templates/frontend.yaml` et redéployé :
+   ```bash
+   helm upgrade --install taskflow ./helm/taskflow \
+     --namespace staging \
+     --create-namespace \
+     --reset-values
+   ```
+
+4. **URL hardcodée dans le script k6** — Le script utilisait `localhost:3004` par défaut. Il faut passer la bonne URL et les credentials via des variables d'environnement. Création d'un utilisateur de test :
+   ```bash
+   curl -X POST http://localhost:8080/api/users/register \
+     -H "Content-Type: application/json" \
+     -d '{"email":"k6test@example.com","password":"k6test123","name":"K6 Test"}'
+   ```
+
+**Commande k6 finale :**
+
+```bash
+k6 run \
+  -e BASE_URL=http://localhost:8080 \
+  -e EMAIL=k6test@example.com \
+  -e PASSWORD=k6test123 \
+  scripts/load-test-realistic.js
+```
+
+**Résultats du test :**
+
+```
+checks_succeeded: 95.19% (5689 out of 5976)
+checks_failed:    4.80%  (287 out of 5976)
+
+✓ login 200
+✓ tasks 200
+✗ tasks response < 500ms  ↳ 80% — ✓ 803 / ✗ 193
+✓ create task 201
+✓ notifs 200
+✗ notifs response < 500ms ↳ 90% — ✓ 902 / ✗ 94
+
+http_req_duration: avg=822ms  p(90)=2.68s  p(95)=5.37s
+http_req_failed:   0.00%
+iterations:        996
+```
+
+![Résultat k6 test de charge](preuves/partie-4/partie-b/k6-load-test-result.png)
+
+La p95 atteint **5.37s** — largement au-dessus du seuil de 500ms configuré dans l'alerte `HighP95Latency`.
+
+---
+
+### Observation dans Alertmanager
+
+```bash
+kubectl port-forward -n monitoring svc/monitoring-kube-prometheus-alertmanager 9093:9093
+```
+
+![Interface Alertmanager avec alertes actives](preuves/partie-4/partie-b/alertmanager-alerts.png)
+
+**Observation :** l'alerte `HighP95Latency` est bien apparue dans Alertmanager pendant le test k6. Cela confirme que Prometheus a correctement évalué la règle et qu'Alertmanager a reçu l'alerte.
+
+Après mise à jour de la règle pour cibler `api-gateway`, la notification d'alerte a été traitée par Alertmanager et l'email de test a bien été envoyé.
+
+Les 15+ alertes visibles dans Alertmanager correspondent également à des alertes Kubernetes internes (kube-proxy, etcd, kube-controller-manager inaccessibles — comportement normal sur kind).
+
+---
+
+### Vérification de l'envoi email via Brevo
+
+Les logs Alertmanager confirment que la configuration SMTP fonctionne :
+
+```
+level=WARN msg="Notify attempt failed" err="525 5.7.1 Unauthorized IP address" attempts=1
+level=WARN msg="Notify attempt failed" err="525 5.7.1 Unauthorized IP address" attempts=7
+...
+level=INFO msg="Notify success" attempts=12 numAlerts=16
+```
+
+Brevo a d'abord rejeté les premières tentatives (`525 5.7.1 Unauthorized IP address`) — l'IP du cluster kind n'était pas encore autorisée. Après plusieurs tentatives, l'envoi a réussi à la 12e tentative.
+
+![Email envoyé confirmé dans Brevo](preuves/partie-4/partie-b/brevo-email-sent.png)
+
+### Comprendre les timings
+
+| Paramètre | Où | Rôle |
+|---|---|---|
+| `for: 30s` | `PrometheusRule` | Prometheus attend 30s de condition vraie avant de passer en `firing` |
+| `group_wait: 30s` | Alertmanager `route` | Alertmanager attend 30s après réception avant d'envoyer la première notification |
+| `group_interval: 5m` | Alertmanager `route` | Délai minimum entre deux notifications si le groupe change |
+| `repeat_interval: 1h` | Alertmanager `route` | Délai avant de renvoyer une alerte déjà notifiée |
+
+> Si `for` + `group_wait` dépasse la durée du pic de latence, on reçoit uniquement le `resolved` sans jamais avoir reçu le `fired`. Sur kind avec des ressources limitées, les pics de latence sont courts et imprévisibles — en production avec un cluster dédié, les seuils seraient plus stables.

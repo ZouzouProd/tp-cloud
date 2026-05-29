@@ -71,6 +71,7 @@ Contient :
 - Création du chart local avec `kube-prometheus-stack` en dépendance
 - Intégration des dashboards via `.Files.Glob` et réponses aux questions théoriques
 - Connexion de TaskFlow à Prometheus via ServiceMonitors générés avec `range`
+- Configuration Alertmanager avec SMTP Brevo et test de charge k6
 
 **Captures d'écran :**
 - [Inspection du Chart.yaml kube-prometheus-stack](preuves/partie-4/partie-b/inspect-chart.png)
@@ -85,6 +86,11 @@ Contient :
 - [helm upgrade taskflow avec labels et ports nommés](preuves/partie-4/partie-b/helm-upgrade-taskflow-servicemonitor.png)
 - [helm upgrade monitoring avec ServiceMonitors](preuves/partie-4/partie-b/helm-upgrade-monitoring-servicemonitor.png)
 - [Prometheus targets — services TaskFlow up](preuves/partie-4/partie-b/prometheus-targets-taskflow.png)
+- [Règles d'alerte chargées dans Prometheus](preuves/partie-4/partie-b/prometheus-rules.png)
+- [helm upgrade avec config Alertmanager](preuves/partie-4/partie-b/helm-upgrade-alertmanager.png)
+- [Résultat k6 test de charge](preuves/partie-4/partie-b/k6-load-test-result.png)
+- [Interface Alertmanager avec alertes actives](preuves/partie-4/partie-b/alertmanager-alerts.png)
+- [Email envoyé confirmé dans Brevo](preuves/partie-4/partie-b/brevo-email-sent.png)
 
 ---
 

@@ -8,3 +8,4 @@ kubeconfig.yml
 **/secret.yaml
 helm/taskflow/values.production-secrets.yaml
 helm/taskflow/values.*.local.yaml
+taskflow-app/helm/monitoring/values.monitoring.secret.yaml
