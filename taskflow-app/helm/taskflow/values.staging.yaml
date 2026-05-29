@@ -1,0 +1,6 @@
+taskService:
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPU: 70

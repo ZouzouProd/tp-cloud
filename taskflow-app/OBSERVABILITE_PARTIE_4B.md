@@ -929,10 +929,6 @@ helm upgrade --install monitoring ./helm/monitoring \
 
 ![helm upgrade avec config Alertmanager](preuves/partie-4/partie-b/helm-upgrade-alertmanager.png)
 
----
-
-### Test de charge avec k6
-
 **Problèmes rencontrés avant de lancer k6 :**
 
 1. **k6 non installé** — `Command 'k6' not found`. Installation via snap :
@@ -1029,6 +1025,8 @@ Brevo a d'abord rejeté les premières tentatives (`525 5.7.1 Unauthorized IP ad
 
 ![Email envoyé confirmé dans Brevo](preuves/partie-4/partie-b/brevo-email-sent.png)
 
+![Email reçu — logs transactionnels Brevo](preuves/partie-4/partie-b/mail-alert-brevo.png)
+
 ### Comprendre les timings
 
 | Paramètre | Où | Rôle |
@@ -1039,3 +1037,403 @@ Brevo a d'abord rejeté les premières tentatives (`525 5.7.1 Unauthorized IP ad
 | `repeat_interval: 1h` | Alertmanager `route` | Délai avant de renvoyer une alerte déjà notifiée |
 
 > Si `for` + `group_wait` dépasse la durée du pic de latence, on reçoit uniquement le `resolved` sans jamais avoir reçu le `fired`. Sur kind avec des ressources limitées, les pics de latence sont courts et imprévisibles — en production avec un cluster dédié, les seuils seraient plus stables.
+
+---
+
+## Étape 6 — Auto-scaling avec le HPA
+
+### Prérequis : installer le Metrics Server
+
+Le HPA a besoin du **Metrics Server** pour lire les métriques CPU/mémoire des pods. Sur kind, il faut ajouter un flag pour contourner les certificats auto-signés :
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+kubectl patch deployment metrics-server -n kube-system \
+  --type='json' \
+  -p='[{"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--kubelet-insecure-tls"}]'
+```
+
+---
+
+### Implémenter le HPA
+
+Deux contraintes à respecter dans le template Helm :
+
+1. Quand le HPA est actif, il prend ownership du champ `spec.replicas` — Helm ne doit **pas** le définir simultanément sous peine de conflit. Le champ `replicas` est donc conditionnel.
+2. La ressource `HorizontalPodAutoscaler` ne doit être générée **que si** le HPA est activé dans les valeurs.
+
+**`helm/taskflow/values.staging.yaml`** — activation du HPA en staging :
+
+```yaml
+taskService:
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPU: 70
+```
+
+**`helm/taskflow/templates/task-service.yaml`** — template conditionnel :
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: task-service
+spec:
+  {{- if not .Values.taskService.hpa.enabled }}
+  replicas: {{ .Values.taskService.replicaCount }}
+  {{- end }}
+  ...
+---
+{{- if .Values.taskService.hpa.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: task-service-hpa
+  namespace: {{ .Release.Namespace }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: task-service
+  minReplicas: {{ .Values.taskService.hpa.minReplicas }}
+  maxReplicas: {{ .Values.taskService.hpa.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.taskService.hpa.targetCPU }}
+{{- end }}
+```
+
+Quand `hpa.enabled: true` :
+- `spec.replicas` est omis du Deployment → le HPA prend le contrôle
+- La ressource `HorizontalPodAutoscaler` est générée
+
+Quand `hpa.enabled: false` :
+- `spec.replicas` est défini par `replicaCount` → comportement normal
+- Aucun HPA n'est créé
+
+---
+
+### Déploiement
+
+```bash
+helm upgrade --install taskflow ./helm/taskflow \
+  --namespace staging \
+  -f helm/taskflow/values.staging.yaml
+```
+
+**Vérification du HPA :**
+
+```bash
+kubectl get hpa -n staging
+```
+
+![HPA actif en staging](preuves/partie-4/partie-b/hpa-active.png)
+
+---
+
+### Réflexion théorique — Observer et comprendre le scaling
+
+#### Question 11 — Quels services montrent une augmentation de latence sous charge ?
+
+**Réponse :**
+
+D'après nos observations en Partie 2 et les dashboards Grafana pendant le test k6 :
+
+- **`task-service`** : le plus impacté — il reçoit 2 requêtes par itération (GET + POST) et effectue des écritures en base de données (INSERT PostgreSQL + publication Redis). C'est le goulot d'étranglement principal.
+- **`api-gateway`** : latence augmente proportionnellement car toutes les requêtes transitent par lui (4 requêtes par itération).
+- **`user-service`** et **`notification-service`** : moins impactés — opérations principalement en lecture.
+
+C'est cohérent avec l'architecture : le `task-service` est le seul service qui écrit en base de données, ce qui crée de la contention sous charge.
+
+---
+
+#### Question 12 — Lesquels des services ont du sens à scaler horizontalement ?
+
+**Réponse :**
+
+| Service | Scaling horizontal | Justification |
+|---|---|---|
+| `api-gateway` | ✅ Oui | Stateless, pur routage HTTP — scale facilement |
+| `task-service` | ✅ Oui | Stateless, mais limité par PostgreSQL (goulot d'étranglement réel) |
+| `user-service` | ✅ Oui | Stateless, lectures principalement |
+| `notification-service` | ✅ Oui | Stateless, consomme Redis |
+| `postgres` | ❌ Non (sans configuration spéciale) | Stateful — nécessite un StatefulSet avec réplication (read replicas) et un connection pooler (PgBouncer). Scaler naïvement crée des conflits d'écriture |
+| `redis` | ❌ Non (en mode standalone) | Stateful — nécessite Redis Cluster ou Redis Sentinel pour la HA. En mode standalone, un seul master |
+
+**Conclusion :** les services stateless scalent bien horizontalement. Le vrai goulot d'étranglement est PostgreSQL — ajouter des replicas applicatifs sans scaler la base ne fait qu'augmenter la pression sur celle-ci (comme observé en Partie 2).
+
+---
+
+#### Question 13 — Le HPA a-t-il amélioré les résultats ?
+
+**Réponse :**
+
+Sur kind, le HPA **n'améliore pas significativement les performances** pour les mêmes raisons qu'en Partie 2 avec Docker Compose :
+
+1. **Tous les pods partagent le même nœud physique** — ajouter des replicas ne fait qu'augmenter la contention CPU/mémoire sur la même machine.
+2. **PostgreSQL reste le goulot d'étranglement** — plus de replicas `task-service` = plus de connexions simultanées à la base = plus de locks et de latence.
+3. **Le HPA scale sur le CPU** — mais la latence élevée vient des I/O PostgreSQL, pas du CPU. Le CPU peut rester bas pendant que les requêtes attendent des locks en base.
+
+En production sur un vrai cluster cloud (EKS, GKE, AKS) avec des nœuds élastiques et PostgreSQL managé (RDS, Cloud SQL), le HPA apporterait un gain réel.
+
+---
+
+#### Question 14 — Que se passe-t-il si le nœud n'a plus de ressources ? Cluster Autoscaler et Karpenter ?
+
+**Réponse :**
+
+Si le nœud sous-jacent n'a plus de ressources disponibles, les nouveaux pods créés par le HPA restent en état **`Pending`** — Kubernetes ne peut pas les scheduler. Le HPA a créé les pods mais le cluster n'a pas la capacité de les exécuter.
+
+**Cluster Autoscaler** et **Karpenter** sont deux mécanismes qui scalent les **nœuds** eux-mêmes :
+
+- **Cluster Autoscaler** : surveille les pods `Pending` et demande au cloud provider d'ajouter des nœuds au node group. Fonctionne avec AWS Auto Scaling Groups, GCP Managed Instance Groups, etc.
+- **Karpenter** (AWS) : plus moderne et réactif — provisionne directement des instances EC2 adaptées aux besoins des pods en attente, sans passer par des node groups préconfigurés.
+
+**Sur kind**, ces mécanismes ne fonctionnent pas — kind tourne sur une seule machine locale sans cloud provider. C'est pourquoi le HPA est désactivé en staging et réservé à la production.
+
+---
+
+### Cloisonner le HPA à la production
+
+Sur kind, le HPA est désactivé après les tests :
+
+```yaml
+# helm/taskflow/values.staging.yaml
+taskService:
+  hpa:
+    enabled: false
+```
+
+En production, il serait configuré avec plus de replicas :
+
+```yaml
+# helm/taskflow/values.production.yaml
+taskService:
+  hpa:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPU: 70
+```
+
+---
+
+### Réflexion théorique — Choisir la bonne métrique de scaling
+
+#### Question 15 — Le CPU est-il la métrique la plus pertinente pour un service HTTP ?
+
+**Réponse :**
+
+**Non, le CPU n'est pas toujours la métrique la plus pertinente.** Exemple concret : si le `task-service` attend des locks PostgreSQL, les threads sont bloqués en I/O — le CPU est quasi à 0% mais les utilisateurs subissent une latence de plusieurs secondes. Le HPA basé sur CPU ne scalerait pas dans ce cas.
+
+Les métriques plus pertinentes pour un service HTTP :
+- **Latence p95/p99** — mesure directement l'expérience utilisateur
+- **Nombre de requêtes en attente** (queue depth)
+- **Taux d'erreurs**
+
+---
+
+#### Question 16 — Avec quelles autres métriques combiner le HPA ?
+
+**Réponse :**
+
+Avec les métriques déjà exposées via Prometheus, on combinerait :
+
+```yaml
+metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Pods
+    pods:
+      metric:
+        name: http_request_duration_ms_p95
+      target:
+        type: AverageValue
+        averageValue: "300"   # scale si p95 > 300ms
+  - type: Pods
+    pods:
+      metric:
+        name: http_requests_total_rate
+      target:
+        type: AverageValue
+        averageValue: "100"   # scale si > 100 req/s par pod
+```
+
+D'après nos dashboards Grafana (Partie 2), la latence p95 dépasse 300ms dès que la charge atteint ~30 VUs — c'est un seuil pertinent pour déclencher le scaling avant que les utilisateurs ne subissent une dégradation visible.
+
+---
+
+#### Question 17 — Quel composant manque pour utiliser des métriques custom avec le HPA ?
+
+**Réponse :**
+
+Pour utiliser des métriques custom (comme `http_request_duration_ms_p95`) avec le HPA `autoscaling/v2`, il faut un **Custom Metrics API Server** — un composant qui expose les métriques Prometheus à l'API Kubernetes.
+
+Le plus utilisé est **[prometheus-adapter](https://github.com/kubernetes-sigs/prometheus-adapter)** : il lit les métriques depuis Prometheus et les expose via l'API `custom.metrics.k8s.io` que le HPA peut interroger.
+
+Sans ce composant, le HPA ne peut utiliser que les métriques natives Kubernetes (CPU, mémoire) fournies par le Metrics Server. Sur notre cluster kind, `prometheus-adapter` n'est pas installé — c'est pourquoi nous nous limitons au CPU.
+
+---
+
+## Étape 7 — Haute disponibilité et résilience
+
+### Désactivation du HPA en staging
+
+Après les tests de l'étape 6, le HPA est désactivé en staging :
+
+```yaml
+# helm/taskflow/values.staging.yaml
+taskService:
+  hpa:
+    enabled: false
+```
+
+```bash
+helm upgrade --install taskflow ./helm/taskflow \
+  --namespace staging \
+  -f helm/taskflow/values.staging.yaml
+```
+
+### Vérification des replicas
+
+```bash
+kubectl get deployments -n staging
+```
+
+![Deployments en staging](preuves/partie-4/partie-b/deployments-staging.png)
+
+Chaque service dispose de plusieurs replicas (`replicaCount: 2` pour `api-gateway`, `task-service`, `user-service`, `frontend`), ce qui garantit qu'un pod peut tomber sans interrompre le service.
+
+---
+
+### Simulation de panne pendant un test de charge
+
+Pendant que k6 tourne, nous avons supprimé les deux pods `api-gateway` simultanément :
+
+```bash
+kubectl delete pod -n staging -l app=api-gateway --wait=false
+```
+
+Kubernetes a immédiatement recréé les pods :
+
+```
+pod "api-gateway-7bb8c6b48-4mtjd" deleted
+pod "api-gateway-7bb8c6b48-5jjnf" deleted
+
+api-gateway-7bb8c6b48-2sfwt   1/1   Running   0   2m32s
+api-gateway-7bb8c6b48-crnlx   1/1   Running   0   2m32s
+```
+
+![Pods self-healing — recréation automatique](preuves/partie-4/partie-b/self-healing-pods.png)
+
+![Grafana pendant le self-healing](preuves/partie-4/partie-b/grafana-self-healing.png)
+
+**Observation :** les nouveaux pods sont passés en `Running` en moins de 3 secondes. Grafana n'a montré aucun pic d'erreurs significatif — le trafic k6 a continué sans interruption visible. Kubernetes a redirigé les requêtes vers les pods survivants le temps que les nouveaux soient prêts.
+
+---
+
+### Réflexion théorique — Élasticité vs haute disponibilité
+
+#### Question 18 — Quelle différence entre élasticité et haute disponibilité ? Le HPA contribue-t-il aux deux ?
+
+**Réponse :**
+
+| | Élasticité | Haute disponibilité |
+|---|---|---|
+| **Définition** | Ajuster automatiquement la capacité en fonction de la charge | Maintenir le service opérationnel malgré les pannes |
+| **Déclencheur** | Charge (CPU, requêtes/s, latence) | Panne d'un composant (pod crashé, nœud tombé) |
+| **Mécanisme Kubernetes** | HPA (Horizontal Pod Autoscaler) | `replicaCount > 1` + Deployment rolling update |
+| **Objectif** | Performance et coût | Continuité de service |
+
+**Le HPA contribue-t-il aux deux ?**
+
+- ✅ **Élasticité** : oui, c'est son rôle principal — il scale up sous charge et scale down quand la charge diminue.
+- ⚠️ **Haute disponibilité** : partiellement — le HPA maintient un `minReplicas` (ex: 2), ce qui garantit qu'il y a toujours au moins 2 pods. Mais la HA vient surtout du `replicaCount` défini dans le Deployment, pas du HPA lui-même.
+
+---
+
+#### Question 19 — Avec `replicaCount: 2` sur `api-gateway`, que se passe-t-il si un pod crashe ?
+
+**Réponse :**
+
+Avec `replicaCount: 2` :
+- Le pod crashé est détecté par le **ReplicaSet Controller**
+- Un nouveau pod est immédiatement schedulé pour maintenir le nombre souhaité à 2
+- Pendant le redémarrage (~2-3s), **1 pod reste actif** et continue à recevoir le trafic
+- Le Service Kubernetes retire automatiquement le pod crashé de ses endpoints → aucune requête n'est routée vers lui
+
+**Avec `replicaCount: 1` :**
+- Le seul pod crashé → **downtime** pendant le redémarrage
+- Toutes les requêtes échouent jusqu'à ce que le nouveau pod soit `Ready`
+- Sur notre cluster, le redémarrage prend ~10-15s → interruption de service visible
+
+Notre test le confirme : avec 2 replicas `api-gateway`, la suppression simultanée des deux pods n'a causé aucune erreur visible dans Grafana — les nouveaux pods étaient prêts en moins de 3 secondes.
+
+---
+
+#### Question 20 — Quel composant Kubernetes est responsable de la réconciliation des replicas ?
+
+**Réponse :**
+
+Le **ReplicaSet Controller** (partie du `kube-controller-manager`) est responsable de maintenir le nombre de replicas souhaité. Il surveille en permanence l'état réel du cluster et le compare à l'état désiré (défini dans le Deployment) :
+
+```
+État désiré : 2 replicas api-gateway
+État réel   : 1 replica (après crash)
+→ Action    : créer 1 nouveau pod
+```
+
+Le Deployment lui-même délègue la gestion des pods à un ReplicaSet. Quand on fait un `helm upgrade`, Kubernetes crée un nouveau ReplicaSet et effectue un rolling update (remplace progressivement les anciens pods par les nouveaux).
+
+---
+
+#### Question 21 — Le déploiement en staging garantit-il la haute disponibilité ? Quelles conditions pour la garantir en production ?
+
+**Réponse :**
+
+**En staging (kind) :** non, pas vraiment. Même avec `replicaCount: 2`, tous les pods tournent sur les mêmes nœuds physiques (3 nœuds kind = 3 conteneurs Docker sur la même machine). Si la machine hôte tombe, tout tombe.
+
+**Conditions pour garantir la HA en production :**
+
+1. **Multi-nœuds sur machines physiques distinctes** — les pods doivent être distribués sur des nœuds différents via `podAntiAffinity`
+2. **Multi-zones** — les nœuds doivent être dans des zones de disponibilité différentes (ex: `eu-west-1a`, `eu-west-1b`) pour résister à une panne de datacenter
+3. **`replicaCount ≥ 2`** pour tous les services critiques
+4. **Readiness probes correctement configurées** — Kubernetes ne route le trafic vers un pod que quand il est réellement prêt
+5. **PodDisruptionBudget (PDB)** — garantit qu'un minimum de pods reste disponible pendant les maintenances
+6. **PostgreSQL en HA** — StatefulSet avec réplication (primary + standby) ou service managé (RDS Multi-AZ)
+7. **Redis en HA** — Redis Sentinel ou Redis Cluster
+
+---
+
+## Conclusion
+
+### Récapitulatif de la Partie 4B
+
+| Étape | Ce qu'on a fait | Résultat |
+|---|---|---|
+| **1** | Installation `kube-prometheus-stack` via Helm | Stack complète en 1 commande vs 5+ fichiers en Partie 1 |
+| **2** | Dashboards custom via `.Files.Glob` | Dashboards versionnés dans le chart, chargés automatiquement |
+| **3** | ServiceMonitors avec `range` | 4 services scrappés par Prometheus, chaque replica visible individuellement |
+| **4** | Règle `HighP95Latency` | Alerte PromQL correctement configurée, chargée dans Prometheus |
+| **5** | Alertmanager + Brevo SMTP | Envoi email fonctionnel (`Notify success` après 12 tentatives) |
+| **6** | HPA conditionnel sur `task-service` | Scale automatique basé sur CPU, désactivé en staging |
+| **7** | Self-healing avec 2 replicas | Suppression de pods sans interruption de service visible |
+
+### Apports de Helm vs manifestes bruts (Partie 3)
+
+- **Réutilisabilité** : un seul chart pour staging et production, différenciés par les values
+- **Versioning** : `helm history` trace toutes les releases, `helm rollback` en cas de problème
+- **Composition** : dépendances gérées automatiquement (`redis`, `kube-prometheus-stack`)
+- **Secrets séparés** : `values.secret.yaml` hors du repo Git
+- **Templates DRY** : `range` pour les ServiceMonitors, `if` pour le HPA conditionnel

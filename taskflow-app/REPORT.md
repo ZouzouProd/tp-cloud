@@ -72,6 +72,9 @@ Contient :
 - Intégration des dashboards via `.Files.Glob` et réponses aux questions théoriques
 - Connexion de TaskFlow à Prometheus via ServiceMonitors générés avec `range`
 - Configuration Alertmanager avec SMTP Brevo et test de charge k6
+- HPA (Horizontal Pod Autoscaler) conditionnel sur le task-service
+- Simulation de panne et self-healing avec 2 replicas (Étape 7)
+- Réponses aux questions théoriques sur élasticité vs haute disponibilité
 
 **Captures d'écran :**
 - [Inspection du Chart.yaml kube-prometheus-stack](preuves/partie-4/partie-b/inspect-chart.png)
@@ -88,9 +91,13 @@ Contient :
 - [Prometheus targets — services TaskFlow up](preuves/partie-4/partie-b/prometheus-targets-taskflow.png)
 - [Règles d'alerte chargées dans Prometheus](preuves/partie-4/partie-b/prometheus-rules.png)
 - [helm upgrade avec config Alertmanager](preuves/partie-4/partie-b/helm-upgrade-alertmanager.png)
-- [Résultat k6 test de charge](preuves/partie-4/partie-b/k6-load-test-result.png)
 - [Interface Alertmanager avec alertes actives](preuves/partie-4/partie-b/alertmanager-alerts.png)
 - [Email envoyé confirmé dans Brevo](preuves/partie-4/partie-b/brevo-email-sent.png)
+- [Logs transactionnels Brevo](preuves/partie-4/partie-b/mail-alert-brevo.png)
+- [HPA actif en staging](preuves/partie-4/partie-b/hpa-active.png)
+- [Deployments en staging](preuves/partie-4/partie-b/deployments-staging.png)
+- [Pods self-healing — recréation automatique](preuves/partie-4/partie-b/self-healing-pods.png)
+- [Grafana pendant le self-healing](preuves/partie-4/partie-b/grafana-self-healing.png)
 
 ---
 
